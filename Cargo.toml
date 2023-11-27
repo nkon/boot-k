@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "bootloader",
+    "app-blinky",
+]
+
+resolver = "2"
