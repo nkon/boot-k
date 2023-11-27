@@ -72,3 +72,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     Finished dev [unoptimized + debuginfo] target(s) in 0.06s
 ```
 
+# ハードウエアの準備
+
+2枚のRP2040ボードを使用する。一枚は `picoprobe.uf2` のファームウエアを書き込んでデバッガとして使い、もう一枚はターゲットとして使う。ターゲットには、一枚目のデバッガから SWD 接続する。
+
+ハードウエアの構成や、関連ツールのインストールについては別エントリー。
+
+https://nkon.github.io/RasPico-Rust/
+
+# テンプレート・プロジェクトの実行
+
+https://github.com/rp-rs/rp2040-project-template
+
+からプロジェクトテンプレートをコピーしてくる。
+
+```
+❯ git clone https://github.com/rp-rs/rp2040-project-template
+Cloning into 'rp2040-project-template'...
+remote: Enumerating objects: 391, done.
+remote: Counting objects: 100% (210/210), done.
+remote: Compressing objects: 100% (92/92), done.
+remote: Total 391 (delta 148), reused 140 (delta 116), pack-reused 181
+Receiving objects: 100% (391/391), 82.32 KiB | 2.42 MiB/s, done.
+Resolving deltas: 100% (195/195), done.
+```
+ここで、ワークスペースの Cargo.toml => members に rp2040-project-template を付け加える。
+
+`cargo build`でビルド。
+
+```
+❯ cd rp2040-project-template/ 
+
+❯ cargo build
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/rp2040-project-template/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+    Updating crates.io index
+  Downloaded proc-macro2 v1.0.70
+  Downloaded rp2040-hal v0.9.1
+  Downloaded 2 crates (222.5 KB) in 0.44s
+   Compiling proc-macro2 v1.0.70
+   Compiling unicode-ident v1.0.12
+   Compiling syn v1.0.109
+...
+   Compiling rp2040-hal-macros v0.1.0
+   Compiling pio v0.2.1
+   Compiling rp2040-hal v0.9.1
+    Finished dev [unoptimized + debuginfo] target(s) in 10.55s
+```
+
+`cargo run` で `probe-rs`がファームウェアをデバイスに転送し、実行する。
+
+LEDが点滅し、RTTで実行端末にメッセージが表示される。
+
+```
+❯ cargo run  
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/rp2040-project-template/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+    Finished dev [unoptimized + debuginfo] target(s) in 0.03s
+     Running `probe-rs run --chip RP2040 --protocol swd /.../boot-k/target/thumbv6m-none-eabi/debug/rp2040-project-template`
+     Erasing sectors ✔ [00:00:00] [] 52.00 KiB/52.00 KiB @ 64.62 KiB/s (eta 0s )
+ Programming pages   ✔ [00:00:01] [] 52.00 KiB/52.00 KiB @ 30.45 KiB/s (eta 0s )    Finished in 2.544s
+INFO  Program start
+└─ rp2040_project_template::__cortex_m_rt_main @ src/main.rs:27  
+INFO  on!
+└─ rp2040_project_template::__cortex_m_rt_main @ src/main.rs:64  
+INFO  off!
+└─ rp2040_project_template::__cortex_m_rt_main @ src/main.rs:67  
+INFO  on!
+└─ rp2040_project_template::__cortex_m_rt_main @ src/main.rs:64  
+INFO  off!
+└─ rp2040_project_template::__cortex_m_rt_main @ src/main.rs:67  
+```

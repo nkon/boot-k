@@ -2,6 +2,7 @@
 members = [
     "bootloader",
     "app-blinky",
+    "rp2040-project-template",
 ]
 
 resolver = "2"
