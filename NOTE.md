@@ -17,6 +17,7 @@
       - [リンカ・スクリプト](#リンカスクリプト)
     - [panic-probe](#panic-probe)
     - [VS Code debugger](#vs-code-debugger)
+- [bootloader プロジェクトの作成](#bootloader-プロジェクトの作成)
 
 
 # ワークスペースの作成
@@ -412,3 +413,28 @@ rustflags = [
 ```
 
 また、launch.json中にコメントされているが、rp2040.svdを保存しておけば、デバッガの変数ビューで、ペリフェラル・レジスタが表示される。
+
+# bootloader プロジェクトの作成
+
+テンプレートプロジェクトをコピーして `bootloader`プロジェクトを作成する。
+
+```
+bootloader
+├── src
+│  └── main.rs
+├── memory.x
+├── Cargo.toml
+├── build.rs
+├── .vscode
+│  ├── settings.json
+│  ├── rp2040.svd
+│  └── launch.json
+├── .gitignore
+└── .cargo
+   └── config.toml
+```
+
+プロジェクト名を `rp2040-project-template`から`bootloader`に直したり、不要なファイルを消したりと、必要な修正を行う。
+
+まずはこの段階で`cargo build`でビルドが通って、`cargo run`で正常動作することを確認。
+
