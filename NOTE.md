@@ -17,7 +17,11 @@
       - [リンカ・スクリプト](#リンカスクリプト)
     - [panic-probe](#panic-probe)
     - [VS Code debugger](#vs-code-debugger)
+- [自作するブートローダの機能](#自作するブートローダの機能)
+- [メモリ・マップ　設計](#メモリマップ設計)
+  - [開発のステップ](#開発のステップ)
 - [bootloader プロジェクトの作成](#bootloader-プロジェクトの作成)
+  - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
 
 
 # ワークスペースの作成
@@ -414,6 +418,83 @@ rustflags = [
 
 また、launch.json中にコメントされているが、rp2040.svdを保存しておけば、デバッガの変数ビューで、ペリフェラル・レジスタが表示される。
 
+
+# 自作するブートローダの機能
+
+* イメージの署名を検証して、正しい場合のみ起動する。
+* 新しいイメージがあれば、古いイメージをアップデートして起動する。
+
+# メモリ・マップ　設計
+
+* bootloader
+    * .boot2: boot2が格納される。256B。末尾4BはCRC。
+    * その後に `.vector_table`。192B(0xc0)。
+    * その跡に `.text`。
+    * 合計 0x2_0000(128KB)
+    * 実力、、、 release build(LTO)が必要。
+
+* application
+    * .image_header: 256B(0x100)
+    * その後に `.vector_table`。192B(0xc0)。
+    * その跡に `.text`。
+    * 合計 0xe_0000(896KB)
+    * アップデート用にも同量のメモリが必要。
+
+基本的な動作だと、Internal ROM => boot2 => bootloader本体へ実行を移す、という流れになる。
+しかし、それだとbootloaderはXIPモードで動く。その場合、QSPI Flashは読み込み専用でマップされる。
+なので、applicationの書き換えができない。
+
+* Option #1: コピーコードをSRAM上で動くように書く。
+* Option #2: boot2 を RAM モードにする。
+
+| Address   | size           | Physical                      |project      |Segment      |  Address  | size          | Alias                   |
+|-----------|----------------|-------------------------------|-------------|-------------|-----------|---------------|-------------------------|
+|0x0000_0000|  16K(    0x400)| Internal ROM                  |             |             |0x0000_0000|               |ROM_BASE                 |
+|           |                |                               |             |             |           |               |                         |
+|0x1000_0000|2048K(0x20_0000)| QSPI Flash(XIP)               |bootloader   |.boot2       |0x1000_0000|0x100(256B)    |total 0x2_0000(128KB)    |
+|           |                |                               |             |.vector_table|0x1000_0100|0x0c0(192B)    |                         |
+|           |                |                               |             |.text        |0x1000_01c0|               |                         |
+|           |                |                               |             |             |0x1002_0000|               |                         |
+|           |                |                               |application  |.image_header|0x1002_0000|0x100(256B)    |total 0xe_0000(896KB)    |
+|           |                |                               |             |.vector_table|0x1002_0100|0x0c0(192B)    |                         |
+|           |                |                               |             |.text        |0x1002_01c0|               |                         |
+|           |                |                               |             |             |0x1010_0000|               |                         |
+|           |                |                               |app_update   |.image_header|0x1010_0000|0x100(256B)    |total 0xe_0000(896KB)    |
+|           |                |                               |             |.vector_table|0x1010_0100|0x0c0(192B)    |                         |
+|           |                |                               |             |.text        |0x1010_01c0|               |                         |
+|           |                |                               |             |             |0x101e_0000|               |                         |
+|           |                |                               |swap         |             |0x101e_0000|0x2_0000(128KB)|                         |
+|           |                |                               |             |             |0x1020_0000|               |QSPI_END                 |
+|           |                |                               |             |             |           |               |                         |
+|0x2000_0000| 256K( 0x4_0000)| SRAM                          |             |0x2000_000000|0x2000_0000|0x1_0000(64KB) |SRAM_BASE                |
+|           |                |                               |             |0x2001_000000|0x2001_0000|0x1_0000(64KB) |SRAM1_BASE               |
+|           |                |                               |             |0x2002_000000|0x2002_0000|0x1_0000(64KB) |SRAM2_BASE               |
+|           |                |                               |             |0x2003_000000|0x2003_0000|0x1_0000(64KB) |SRAM3_BASE               |
+|           |                |                               |             |             |0x2004_0000|               |SRAM_STRIPED_END         |
+|           |                |                               |             |0x2004_000000|0x2004_0000|  0x1000( 4KB) |SRAM4_BASE               |
+|           |                |                               |             |0x2004_100000|0x2004_1000|  0x1000( 4KB) |SRAM5_BASE               |
+|           |                |                               |             |             |0x2004_2000|               |SRAM_END                 |
+|           |                |                               |             |             |           |               |                         |
+|0x4000_0000|                | APB Peripherals               |             |             |0x4000_0000|               |                         |
+|           |                |                               |             |             |           |               |                         |
+|0x5000_0000|                | AHB-Lite Peripherals          |             |             |0x5000_0000|               |                         |
+|           |                |                               |             |             |           |               |                         |
+|0xd000_0000|                | IOPORT Registers              |             |             |0xd000_0000|               |                         |
+|           |                |                               |             |             |           |               |                         |
+|0xe000_0000|                | Cortex-M0+ internal registers |             |             |0xe000_0000|               |                         |
+|           |                |                               |             |             |           |               |                         |
+
+## 開発のステップ
+
+1. rp2040_project_template をもとに bootloaderを作る。メモリマップは下記の設計にあわせる。
+2. rp2040_project_template をもとに applicationとしてapp-blinkyを作る。
+3. bootloaderから app-blinkyに制御を移す。
+4. bootloaderがapp-blinkyに制御を移す前に .image_header の署名を検証する。
+5. bootloaderをRAMにコピーして実行する。
+6. bootloader は app_updateが存在したら、app_update => application にイメージをコピーして実行する。
+7. イメージのコピーは swap を使って行い、失敗したら、古いイメージに戻して起動する。
+
+
 # bootloader プロジェクトの作成
 
 テンプレートプロジェクトをコピーして `bootloader`プロジェクトを作成する。
@@ -438,3 +519,42 @@ bootloader
 
 まずはこの段階で`cargo build`でビルドが通って、`cargo run`で正常動作することを確認。
 
+ここから必要な修正を加えていく。
+
+## `rp-pico`というBSPへの依存をなくす
+
+* `Cargo.toml`から`[dependencies]`=>`rp-pico = "0.8"`を削除。
+* `rp2040-hal = { version="0.9", features=["rt", "critical-section-impl"] }`と`rp2040-boot2 = "0.3"`を有効にする。
+* `src/main.rs`で、BSPに依存している部分を、直接 `use`したり`rp3040-hal`への依存に変更する。
+
+```main.rs
+/// bsp を経由せずに直接 cortex_m_rt::entry を use する。エントリーポイントを指定するための `#[entry]`が使えるようになる。
+-use bsp::entry;
++use cortex_m_rt::entry;
+
+-use rp_pico as bsp;
+
+-use bsp::hal::{
++use rp2040_hal::{
+     clocks::{init_clocks_and_plls, Clock},
++    gpio::Pins,
+     pac,
+     sio::Sio,
+     watchdog::Watchdog,
+ };
+ 
+/// bsp を経由せずに、直接 .boot2 セクションを指定する。
+/// ここでは W25Q080 を指定。rpi-pico のW25Q16JV からXIP実行する
++#[link_section = ".boot2"]
++#[used]
++pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
+
+
+/// BSP を使わずに、HAL, GPIOを使ってLEDに繋がっているピンを指定する。
+-    let pins = bsp::Pins::new(
++    let pins = Pins::new(
+
+/// BSP を使わずに、HAL, GPIOを使ってLEDに繋がっているピンを指定する。ボード上ではGPIO25にLEDが繋がっている。
+-    let mut led_pin = pins.led.into_push_pull_output();
++    let mut led_pin = pins.gpio25.into_push_pull_output();
+```

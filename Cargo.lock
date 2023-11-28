@@ -43,7 +43,8 @@ dependencies = [
  "defmt-rtt",
  "embedded-hal",
  "panic-probe",
- "rp-pico",
+ "rp2040-boot2",
+ "rp2040-hal",
 ]
 
 [[package]]
