@@ -24,6 +24,7 @@
   - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
   - [メモリマップを設計どおりに修正する](#メモリマップを設計どおりに修正する)
   - [UARTを使えるようにしておく](#uartを使えるようにしておく)
+- [`bootloader`をもとに`app-blinky`を作る](#bootloaderをもとにapp-blinkyを作る)
 
 
 # ワークスペースの作成
@@ -642,4 +643,128 @@ bootloader on!
 ~.
 
 Disconnected.
+```
+
+
+# `bootloader`をもとに`app-blinky`を作る
+
+すでにLEDを点滅する機能は`bootloader`に存在するが、`bootloader`から起動されるアプリケーションとして、設計されたアドレスに配置されてイメージヘッダをもつ `app-blinky`を作成する。
+
+* もともと `.boot2`があった位置に`.image_header`を配置する。
+* 開始アドレスを修正する。
+* メッセージなどの微修正。
+
+```Cargo.toml
+ [package]
+-name = "bootloader"
++name = "app-blinky"
+```
+
+```memory.x
+ MEMORY {
+-    BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
+-    FLASH : ORIGIN = 0x10000100, LENGTH = 0x20000 - 0x100
++    IMAGE_HEADER : ORIGIN = 0x10020000, LENGTH = 0x100
++    FLASH : ORIGIN = 0x10020100, LENGTH = 0xe0000 - 0x100
+     RAM   : ORIGIN = 0x20000000, LENGTH = 256K
+ }
+ 
+-EXTERN(BOOT2_FIRMWARE)
+-
+ SECTIONS {
+-    .boot2 ORIGIN(BOOT2) :
++    .image_header ORIGIN(IMAGE_HEADER) :
+     {
+-        KEEP(*(.boot2));
+-    } > BOOT2
+-} INSERT BEFORE .text;
++        KEEP(*(.image_header));
++    } > IMAGE_HEADER
++} INSERT BEFORE .text;
+```
+
+```main.rs
+// .boot2 セクションのかわりに .image_header セクションを配置する
+-#[link_section = ".boot2"]
++#[link_section = ".image_header"]
+ #[used]
+-pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
++pub static IMAGE_HEADER: [u8; 256] = [0u8; 256];
+
+/// あとはメッセージの修正など
+
+-    uart.write_full_blocking(b"bootloader stated...\r\n");
++    uart.write_full_blocking(b"app-blinky stated...\r\n");
+ 
+     #[cfg(debug_assertions)]
+-    uart.write_full_blocking(b"bootloader debug build\r\n");
++    uart.write_full_blocking(b"app-blinky debug build\r\n");
+ 
+     #[cfg(not(debug_assertions))]
+-    uart.write_full_blocking(b"bootloader release build\r\n");
++    uart.write_full_blocking(b"app-blinky release build\r\n");
+ 
+ 
+     loop {
+-        uart.write_full_blocking(b"bootloader on!\r\n");
++        uart.write_full_blocking(b"app-blinky on!\r\n");
+         led_pin.set_high().unwrap();
+         delay.delay_ms(500);
+-        uart.write_full_blocking(b"bootloader off!\r\n");
++        uart.write_full_blocking(b"app-blinky off!\r\n");
+         led_pin.set_low().unwrap();
+         delay.delay_ms(500);
+     }
+```
+
+まだ、今の段階では `cargo run`しても`bootloader`しか動作しない。
+
+`cargo objdump`して、セクションが設計通りのアドレスに配置されているかどうかを確認しておく。
+
+rust-embedded プロジェクトが出している [cargo binutils](https://github.com/rust-embedded/cargo-binutils) を入れて置けば、ほぼ gnu binutils 互換で、バイナリの情報を調べることができる。`--`より前のオプションは`cargo`に対するもの、`--`より後ろのオプションは`objdump`に対するもの。ターゲットのバイナリは cargo の情報から適切に選択される。
+
+```
+❯ cargo objdump -v -- --headers
+"~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo" "build" "--message-format=json"
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/bootloader/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/app-blinky/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/rp2040-project-template/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+cd "/.../boot-k/target/thumbv6m-none-eabi/debug" && "rust-objdump" "--triple" "thumbv6m-none-eabi" "app-blinky" "--headers"
+
+app-blinky:     file format elf32-littlearm
+
+Sections:
+Idx Name            Size     VMA      LMA      Type
+  0                 00000000 00000000 00000000 
+  1 .vector_table   000000c0 10020100 10020100 DATA
+  2 .image_header   00000100 10020000 10020000 DATA
+  3 .text           0000bda0 100201c0 100201c0 TEXT
+  4 .rodata         00001bf4 1002bf60 1002bf60 DATA
+  5 .data           00000038 2003fbb8 1002db54 DATA
+  6 .gnu.sgstubs    00000000 1002dba0 1002dba0 TEXT
+  7 .bss            0000000c 2003fbf0 2003fbf0 BSS
+  8 .uninit         00000400 2003fbfc 2003fbfc BSS
+  9 .defmt          00000006 00000000 00000000 
+ 10 .debug_abbrev   00006764 00000000 00000000 DEBUG
+ 11 .debug_info     000cd976 00000000 00000000 DEBUG
+ 12 .debug_aranges  000079a8 00000000 00000000 DEBUG
+ 13 .debug_ranges   00024248 00000000 00000000 DEBUG
+ 14 .debug_str      00103db5 00000000 00000000 DEBUG
+ 15 .debug_pubnames 00048b9e 00000000 00000000 DEBUG
+ 16 .debug_pubtypes 0004df35 00000000 00000000 DEBUG
+ 17 .comment        00000040 00000000 00000000 
+ 18 .ARM.attributes 00000032 00000000 00000000 
+ 19 .debug_frame    00016bbc 00000000 00000000 DEBUG
+ 20 .debug_line     0005b76d 00000000 00000000 DEBUG
+ 21 .debug_loc      000013bc 00000000 00000000 DEBUG
+ 22 .symtab         00005b20 00000000 00000000 
+ 23 .shstrtab       0000010b 00000000 00000000 
+ 24 .strtab         0000e3e6 00000000 00000000 
 ```

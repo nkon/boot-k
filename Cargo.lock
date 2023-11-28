@@ -5,6 +5,16 @@ version = 3
 [[package]]
 name = "app-blinky"
 version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt",
+ "defmt-rtt",
+ "embedded-hal",
+ "panic-probe",
+ "rp2040-boot2",
+ "rp2040-hal",
+]
 
 [[package]]
 name = "arrayvec"
