@@ -22,6 +22,7 @@
   - [開発のステップ](#開発のステップ)
 - [bootloader プロジェクトの作成](#bootloader-プロジェクトの作成)
   - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
+  - [メモリマップを設計どおりに修正する](#メモリマップを設計どおりに修正する)
 
 
 # ワークスペースの作成
@@ -557,4 +558,17 @@ bootloader
 /// BSP を使わずに、HAL, GPIOを使ってLEDに繋がっているピンを指定する。ボード上ではGPIO25にLEDが繋がっている。
 -    let mut led_pin = pins.led.into_push_pull_output();
 +    let mut led_pin = pins.gpio25.into_push_pull_output();
+```
+
+## メモリマップを設計どおりに修正する
+
+上の設計のとおり、bootloaderが使うメモリを `boot2`込みで 0x2_0000に変更する。もともとこの領域に収まっているので、大きな違いはない。
+
+```
+ MEMORY {
+     BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
+-    FLASH : ORIGIN = 0x10000100, LENGTH = 2048K - 0x100
++    FLASH : ORIGIN = 0x10000100, LENGTH = 0x20000 - 0x100
+     RAM   : ORIGIN = 0x20000000, LENGTH = 256K
+ } 
 ```
