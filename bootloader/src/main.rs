@@ -12,9 +12,11 @@ use panic_probe as _;
 
 use rp2040_hal::{
     clocks::{init_clocks_and_plls, Clock},
+    fugit::RateExtU32, // time calculation library
     gpio::Pins,
     pac,
     sio::Sio,
+    uart::{DataBits, StopBits, UartConfig, UartPeripheral},
     watchdog::Watchdog,
 };
 
@@ -53,6 +55,24 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
+    let uart_pins = (pins.gpio0.into_function(), pins.gpio1.into_function());
+    // Need to perform clock init before using UART or it will freeze.
+    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+        .enable(
+            UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
+
+    uart.write_full_blocking(b"bootloader stated...\r\n");
+
+    #[cfg(debug_assertions)]
+    uart.write_full_blocking(b"bootloader debug build\r\n");
+
+    #[cfg(not(debug_assertions))]
+    uart.write_full_blocking(b"bootloader release build\r\n");
+
     // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
     // on-board LED, it might need to be changed.
     // Notably, on the Pico W, the LED is not connected to any of the RP2040 GPIOs but to the cyw43 module instead. If you have
@@ -61,13 +81,12 @@ fn main() -> ! {
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     loop {
-        info!("on!");
+        uart.write_full_blocking(b"bootloader on!\r\n");
         led_pin.set_high().unwrap();
         delay.delay_ms(500);
-        info!("off!");
+        uart.write_full_blocking(b"bootloader off!\r\n");
         led_pin.set_low().unwrap();
         delay.delay_ms(500);
     }
 }
 
-// End of file

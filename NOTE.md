@@ -23,6 +23,7 @@
 - [bootloader プロジェクトの作成](#bootloader-プロジェクトの作成)
   - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
   - [メモリマップを設計どおりに修正する](#メモリマップを設計どおりに修正する)
+  - [UARTを使えるようにしておく](#uartを使えるようにしておく)
 
 
 # ワークスペースの作成
@@ -571,4 +572,74 @@ bootloader
 +    FLASH : ORIGIN = 0x10000100, LENGTH = 0x20000 - 0x100
      RAM   : ORIGIN = 0x20000000, LENGTH = 256K
  } 
+```
+## UARTを使えるようにしておく
+
+なにかと便利だし RTT に依存しないようにするために UART を使えるようにしておく。
+
+```main.rs
+/// uart のHALをuseする。fugitは周波数や時刻の演算用ライブラリ
+ use rp2040_hal::{
+     clocks::{init_clocks_and_plls, Clock},
++    fugit::RateExtU32, // time calculation library
+     gpio::Pins,
+     pac,
+     sio::Sio,
++    uart::{DataBits, StopBits, UartConfig, UartPeripheral},
+     watchdog::Watchdog,
+ };
+ 
+/// UARTの初期化
++    // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
++    let uart_pins = (pins.gpio0.into_function(), pins.gpio1.into_function());
++    // Need to perform clock init before using UART or it will freeze.
++    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
++        .enable(
++            UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
++            clocks.peripheral_clock.freq(),
++        )
++        .unwrap();
+
+/// メッセージの出力は `write_full_blocking()`で。引数はUTF-8ではなくバイト列で。
++    uart.write_full_blocking(b"bootloader stated...\r\n");
+
+/// ビルド設定を出力するようにしておくと便利
++    #[cfg(debug_assertions)]
++    uart.write_full_blocking(b"bootloader debug build\r\n");
++
++    #[cfg(not(debug_assertions))]
++    uart.write_full_blocking(b"bootloader release build\r\n");
+
+     loop {
+-        info!("on!");
++        uart.write_full_blocking(b"bootloader on!\r\n");
+         led_pin.set_high().unwrap();
+         delay.delay_ms(500);
+-        info!("off!");
++        uart.write_full_blocking(b"bootloader off!\r\n");
+         led_pin.set_low().unwrap();
+         delay.delay_ms(500);
+     }
+ }
+```
+
+UARTの出力は `cu`など、好みのターミナルソフトで表示できる。`cu`の場合、終了は`~.`。
+
+```
+❯ sudo cu -l /dev/tty.usbmodem13202 -s 115200
+Connected.
+bootloader stated...
+bootloader debug build
+bootloader on!
+bootloader off!
+bootloader on!
+bootloader off!
+bootloader on!
+bootloader off!
+bootloader on!
+bootloader off!
+bootloader on!
+~.
+
+Disconnected.
 ```
