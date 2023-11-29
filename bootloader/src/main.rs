@@ -4,10 +4,11 @@
 #![no_std]
 #![no_main]
 
+use core::arch::asm;
 use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
+// use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
 
 use rp2040_hal::{
@@ -78,15 +79,26 @@ fn main() -> ! {
     // Notably, on the Pico W, the LED is not connected to any of the RP2040 GPIOs but to the cyw43 module instead. If you have
     // a Pico W and want to toggle a LED with a simple GPIO output pin, you can connect an external
     // LED to one of the GPIO pins, and reference that pin here.
-    let mut led_pin = pins.gpio25.into_push_pull_output();
+    let mut _led_pin = pins.gpio25.into_push_pull_output();
+    delay.delay_ms(500);
+
+    unsafe {
+        asm!(
+            "ldr r0, =0x10020100",
+            "ldr r1, =0xe000ed08",
+            "str r0, [r1]",
+            "ldmia r0, {{r0, r1}}",
+            "msr msp, r0",
+            "bx r1",
+        );
+    };
 
     loop {
-        uart.write_full_blocking(b"bootloader on!\r\n");
-        led_pin.set_high().unwrap();
-        delay.delay_ms(500);
-        uart.write_full_blocking(b"bootloader off!\r\n");
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+        // uart.write_full_blocking(b"bootloader on!\r\n");
+        // led_pin.set_high().unwrap();
+        // delay.delay_ms(500);
+        // uart.write_full_blocking(b"bootloader off!\r\n");
+        // led_pin.set_low().unwrap();
+        // delay.delay_ms(500);
     }
 }
-

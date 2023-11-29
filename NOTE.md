@@ -25,6 +25,11 @@
   - [メモリマップを設計どおりに修正する](#メモリマップを設計どおりに修正する)
   - [UARTを使えるようにしておく](#uartを使えるようにしておく)
 - [`bootloader`をもとに`app-blinky`を作る](#bootloaderをもとにapp-blinkyを作る)
+  - [cargo-binutils](#cargo-binutils)
+- [bootloaderから app-blinkyに制御を移す。](#bootloaderから-app-blinkyに制御を移す)
+  - [boot2 が、自分自身のコードからアプリケーション(この場合は bootloader/main.rs#main())に制御を移す方法を調べる](#boot2-が自分自身のコードからアプリケーションこの場合は-bootloadermainrsmainに制御を移す方法を調べる)
+    - [参考](#参考)
+  - [`bootloader`が`app-blinky`を呼ぶ](#bootloaderがapp-blinkyを呼ぶ)
 
 
 # ワークスペースの作成
@@ -721,7 +726,9 @@ Disconnected.
 
 `cargo objdump`して、セクションが設計通りのアドレスに配置されているかどうかを確認しておく。
 
-rust-embedded プロジェクトが出している [cargo binutils](https://github.com/rust-embedded/cargo-binutils) を入れて置けば、ほぼ gnu binutils 互換で、バイナリの情報を調べることができる。`--`より前のオプションは`cargo`に対するもの、`--`より後ろのオプションは`objdump`に対するもの。ターゲットのバイナリは cargo の情報から適切に選択される。
+## cargo-binutils
+
+rust-embedded プロジェクトが出している [cargo-binutils](https://github.com/rust-embedded/cargo-binutils) を入れて置けば、ほぼ gnu binutils 互換で、バイナリの情報を調べることができる。`--`より前のオプションは`cargo`に対するもの、`--`より後ろのオプションは`objdump`に対するもの。ターゲットのバイナリは cargo の情報から適切に選択される。
 
 ```
 ❯ cargo objdump -v -- --headers
@@ -767,4 +774,135 @@ Idx Name            Size     VMA      LMA      Type
  22 .symtab         00005b20 00000000 00000000 
  23 .shstrtab       0000010b 00000000 00000000 
  24 .strtab         0000e3e6 00000000 00000000 
+```
+
+
+# bootloaderから app-blinkyに制御を移す。
+
+## boot2 が、自分自身のコードからアプリケーション(この場合は bootloader/main.rs#main())に制御を移す方法を調べる
+
+```
+❯ cargo objdump -v -- --disassemble-all > asm.S
+```
+
+のようにディスアセンブルすれば、命令とアドレスの対応が手に入る。
+
+```
+bootloader:	file format elf32-littlearm
+
+Disassembly of section .vector_table:
+
+10000100 <__vector_table>:                   # bootloader のコードの先頭
+10000100: fbb8 2003    	<unknown>            # 0x1000_0100 には SP初期値(0x2003_fbb8)が入っている
+
+10000104 <__RESET_VECTOR>:
+10000104: 01c1         	lsls	r1, r0, #0x7   # 0x1000_0104 には コードの先頭アドレス(0x1000_01c1)が入っている
+10000106: 1000         	asrs	r0, r0, #0x20  # ディスアセは「当てはめ」
+
+10000108 <__reset_vector>:
+10000108: ab0d         	add	r3, sp, #0x34    # そこから先も割り込みハンドラのアドレス。
+1000010a: 1000         	asrs	r0, r0, #0x20
+1000010c: bf45         	<unknown>
+1000010e: 1000         	asrs	r0, r0, #0x20
+		...
+Disassembly of section .boot2:
+
+10000000: b500         	push	{lr}           # boot2のコードの先頭
+10000002: 4b32         	ldr	r3, [pc, #0xc8]         @ 0x100000cc
+		...
+1000009c: 4812         	ldr	r0, [pc, #0x48]         @ 0x100000e8   # 最終的にここにやってくる
+1000009e: 4913         	ldr	r1, [pc, #0x4c]         @ 0x100000ec
+100000a0: 6008         	str	r0, [r1]
+100000a2: c803         	ldm	r0, {r0, r1}
+100000a4: f380 8808    	msr	msp, r0
+100000a8: 4708         	bx	r1               # ここで boot2 の終了、bootloaderの実行開始
+		...
+100000e8: 0100         	lsls	r0, r0, #0x4   # 0x1000_00e8 には 0x1000_0100が格納(bootloaderの先頭アドレス)
+100000ea: 1000         	asrs	r0, r0, #0x20  # ディスアセは「当てはめ」
+100000ec: ed08 e000    	<unknown>            # 0x1000_00ec には 0xe0000_ed08 が格納(PPB_BASE+VTOR_OFFSET)
+```
+
+しかし、それでは読みにくいので https://github.com/rp-rs/rp2040-boot2/blob/main/src/boot2_w25q080.S からソースコードを読んでいく。
+
+コードの動作はアセンブラのほうがわかりやすいが、アドレスの中身はディスアセンブラのほうがわかりやすい。
+
+ペリフェラル(SSI)の初期化と、QSPI Flash の設定を行ったあと、最終的に実行されるコードのアセンブラバージョンは次。
+
+
+https://github.com/rp-rs/rp2040-boot2/blob/main/src/include/boot2_helpers/exit_from_boot2.S#L20
+
+```asm
+vector_into_flash:
+    ldr r0, =(XIP_BASE + 0x100)               // #define XIP_BASE 0x10000100
+    ldr r1, =(PPB_BASE + M0PLUS_VTOR_OFFSET)  // #define PPB_BASE 0xe0000000
+                                              // #define M0PLUS_VTOR_OFFSET 0x0000ed08
+    str r0, [r1]            // VTOR <= 0x1000_0100
+    ldmia r0, {r0, r1}      // r0 <= [r0], r1 <= [r1]
+    msr msp, r0             // msp <= r0     msp=stack pointer
+    bx r1                   // 最終的に bx r1 でr1のアドレスにジャンプする 
+```
+
+**とても興味深いコードだ**。
+
+* まず、`r0` に `XIP_BASE+0x100(=0x1000_0100)` という値をロード。実際のマシン語では、32bit即値は(固定長命令の中にはエンコードできないので)別アドレス(`0x1000_00e8`)に格納されているのを、PC間接参照でロードする(`ldr	r3, [pc, #0xc8]`)。
+* 次に、`r1` に `PPB_BASE+M0PLUS_VTOR_OFFSET(=0xe000_ed08)` という値をロード。`VTOR` はVector Table Offset Registerのことで、その名のとおり、割り込みベクタ・テーブルの先頭アドレスを示す。
+* そして、`r0`の値を`r1`が指すアドレスにストアする(インテル形式とは逆向き)。つまり、`VTOR` が`0x1000_0100`を指す。ここには、リンカによって、`bootloader`の`.vector_table`が居る。
+* `ldmir`はレジスタ復元命令。`POP`のようなもの。`r0`が指し示すアドレスから始まるメモリの内容を、`{r0, r1}`の2つのレジスタに格納する。つまり、`r0`には`r0`が指す`.vector_table[0]`の内容(=SP初期値=`0x2003_fbb8`)が、`r1`には`.vector_table[1]`の内容(=コードの先頭アドレス=`0x1000_01c1`)が格納される。
+* `msr`はスタックポインタを更新する専用命令。`r0`の内容(=SP初期値=`0x2003_ffb8`)が`msp`にセットされる。
+* `bx r1`で`r1`の指すアドレス(=`0x1000_01c1`)にジャンプする。ジャンプの場合、アドレス末尾のビットが`1`だと、それを`0`に変更して、little endian モードで実行する。
+
+### 参考
+
+* `VTOR`の解説 https://developer.arm.com/documentation/dui0662/b/Cortex-M0--Peripherals/System-Control-Block/Vector-Table-Offset-Register
+* `ldmir`命令の解説は https://www.mztn.org/slasm/arm05.html
+* `msr`命令の解説は http://idken.net/posts/2017-12-11-arm_asm2/
+
+## `bootloader`が`app-blinky`を呼ぶ
+
+
+これと同様に bootloader/main.rsを実装すればよい。
+
+* インラインアセンブラを使う。
+
+```rust 
++use core::arch::asm;
+```
+
+* 次の部分が制御を移す本質。
+    + r0 に、移動先のPC(プログラムカウンタ)の値をセット
+    + r1 に、新しいスタックポインタの値をセット
+    + 今回はアドレステーブルを元に即値で書いたが、移植性をよくするなら各種定数から計算するほうが良い。
+* インラインアセンブラ中では、`fmt!`的に`{}`は変数と解釈されるので、`{{ }}`とエスケープする。
+
+```rust
++    unsafe {
++        asm!(
++            "ldr r0, =0x10020100",
++            "ldr r1, =0xe000ed08",
++            "str r0, [r1]",
++            "ldmia r0, {{r0, r1}}",
++            "msr msp, r0",
++            "bx r1",
++        );
++    };
+```
+
+`cargo run`すると、シリアルコンソールに、`bootloader`のメッセージと`app-blinky`のメッセージが表示される。
+
+これで、`bootloader`が`app-blinky`を起動することができた!!!
+
+```
+❯ sudo cu -l /dev/tty.usbmodem13202 -s 115200
+Connected.
+bootloader stated...
+bootloader debug build
+app-blinky stated...
+app-blinky debug build
+app-blinky on!
+app-blinky off!
+app-blinky on!
+app-blinky off!
+~.
+
+Disconnected.
 ```
