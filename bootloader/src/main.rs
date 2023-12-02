@@ -9,6 +9,7 @@ use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
 // use embedded_hal::digital::v2::OutputPin;
+use bootloader::image_header;
 use panic_probe as _;
 
 use rp2040_hal::{
@@ -80,6 +81,13 @@ fn main() -> ! {
     // a Pico W and want to toggle a LED with a simple GPIO output pin, you can connect an external
     // LED to one of the GPIO pins, and reference that pin here.
     let mut _led_pin = pins.gpio25.into_push_pull_output();
+
+    let ih = image_header::load_from_addr(0x1002_0000);
+    info!(
+        "{:x} {:x} {:x} {:x}",
+        ih.header_magic, ih.header_length, ih.hv_major, ih.hv_minor
+    );
+
     delay.delay_ms(500);
 
     unsafe {

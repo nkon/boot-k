@@ -18,7 +18,7 @@
     - [panic-probe](#panic-probe)
     - [VS Code debugger](#vs-code-debugger)
 - [自作するブートローダの機能](#自作するブートローダの機能)
-- [メモリ・マップ　設計](#メモリマップ設計)
+- [メモリ・マップの設計](#メモリマップの設計)
   - [開発のステップ](#開発のステップ)
 - [bootloader プロジェクトの作成](#bootloader-プロジェクトの作成)
   - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
@@ -30,6 +30,13 @@
   - [boot2 が、自分自身のコードからアプリケーション(この場合は bootloader/main.rs#main())に制御を移す方法を調べる](#boot2-が自分自身のコードからアプリケーションこの場合は-bootloadermainrsmainに制御を移す方法を調べる)
     - [参考](#参考)
   - [`bootloader`が`app-blinky`を呼ぶ](#bootloaderがapp-blinkyを呼ぶ)
+- [app-blinkyの署名を検証する](#app-blinkyの署名を検証する)
+  - [ヘッダ構造体の定義とマップ](#ヘッダ構造体の定義とマップ)
+    - [lib クレート、bin クレート](#lib-クレートbin-クレート)
+  - [メモリからの読み込み](#メモリからの読み込み)
+  - [イメージに署名する](#イメージに署名する)
+  - [イメージの署名を検証する](#イメージの署名を検証する)
+  - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
 
 
 # ワークスペースの作成
@@ -432,14 +439,14 @@ rustflags = [
 * イメージの署名を検証して、正しい場合のみ起動する。
 * 新しいイメージがあれば、古いイメージをアップデートして起動する。
 
-# メモリ・マップ　設計
+# メモリ・マップの設計
 
 * bootloader
-    * .boot2: boot2が格納される。256B。末尾4BはCRC。
-    * その後に `.vector_table`。192B(0xc0)。
-    * その跡に `.text`。
+    * .boot2: boot2が格納される。0x1000_0000から256B(=0x100)。末尾4BはCRC。
+        * boot2は `rp2040-boot2`によってバイナリで供給される。
+    * その後に `.vector_table`。192B(=0xc0)。
+    * その跡に `.text`。0x1000_01c0から。
     * 合計 0x2_0000(128KB)
-    * 実力、、、 release build(LTO)が必要。
 
 * application
     * .image_header: 256B(0x100)
@@ -906,3 +913,210 @@ app-blinky off!
 
 Disconnected.
 ```
+
+# app-blinkyの署名を検証する
+
+## ヘッダ構造体の定義とマップ
+
+今は256byteのゼロ埋めされているヘッダ領域だが、中身の構造を作っていく。
+
+### lib クレート、bin クレート
+
+今の構造は次のようになっている。
+
+ちなみに、[`tre`](https://github.com/dduan/tre) コマンドは`tree`コマンドの改良版みたいなもので、色々便利になっている。
+
+```
+
+~/s/r/boot-k on  main [!?] via 🦀 v1.73.0 
+❯ tre 
+[0] .
+├── [1] app-blinky
+│   └── [13] src
+│       └── [14] main.rs
+├── [15] bootloader
+│   ├── [16] src
+│   │   └── [19] main.rs
+├── [31] Cargo.lock
+├── [32] Cargo.toml
+└── [33] NOTE.md
+```
+
+`app-blinky/`の下に`src/main.rs`があり、ここから`app-blinky`という実行ファイルが作られる。また`bootloader`の下に`src/main.rs`があり、ここから`bootloader`という実行ファイルが作られる。
+
+rustのプラクティスとして、「実行ファイルを作る場合でも、ほとんどの機能をライブラリとして実装する」というものがある。`main.rs`からは実行ファイルが作られ、`lib.rs`からはライブラリが作られる。実行ファイルは実行形態なので結合テストができないがライブラリは結合テストが実施される。そのために、`bootloader/src`の下に、`lib.rs`とライブラリの実装(この場合は`image_header.rs`)を作る、
+
+```
+ tre 
+[0] .
+├── [1] app-blinky
+│   └── [13] src
+│       └── [14] main.rs
+├── [15] bootloader
+│   ├── [16] src
+│   │   ├── [17] image_header.rs
+│   │   ├── [18] lib.rs
+│   │   └── [19] main.rs
+├── [31] Cargo.lock
+├── [32] Cargo.toml
+└── [33] NOTE.md
+```
+
+このようにすると、`bootloader`というライブラリが作られ、`bootloader/src/main.rs`はそれを use する。
+
+`bootloader/src/lib.rs`では、`bootloader::image_header`というライブラリをエクスポートする。
+
+```bootloader/src/lib.rs
+#![no_std]
+pub mod image_header;
+```
+`bootloader/src/image_header.rs`では、`bootloader::image_header`というライブラリを実装する。中身は構造体の定義とそれを扱う関数。
+
+```bootloader/src/image_header.rs
+use core::ptr;
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct ImageHeader {
+    pub header_magic: u32,  // 4
+    pub header_length: u16, // +2 = 6
+    pub hv_major: u8,       // +1 = 7
+    pub hv_minor: u8,       // +1 = 8
+
+    pub iv_major: u8,     // +1 = 9
+    pub iv_minor: u8,     // +1 = 10
+    pub iv_revision: u16, // +2 = 12
+    pub iv_build: u32,    // +4 = 16
+
+    pub image_length: u32,    // +4 = 20
+    pub signature: [u8; 128], // +128 = 148
+
+    pub padding: [u8; 104], // +104 = 252
+    pub crc32: u32,         // +4 = 256
+}
+
+pub fn load_from_addr(addr: u32) -> ImageHeader {
+    unsafe { ptr::read_volatile(addr as *const ImageHeader) }
+}
+```
+
+`bootloader/src/main.rs`では`bootloader`ライブラリから`image_header`モジュールを`use`する。ここでは`app_blinky`のイメージヘッダ領域(0x1002_0000)を読み込んで、一部を表示している。
+
+
+```bootloader/src/main.rs
+use bootloader::image_header;
+
+...
+
+    let ih = image_header::load_from_addr(0x1002_0000);
+    info!(
+        "{:x} {:x} {:x} {:x}",
+        ih.header_magic, ih.header_length, ih.hv_major, ih.hv_minor
+    );
+```
+
+一方、`app-blinky`の側では、`Cargo.toml`で相対パスを用いて、ローカル・ライブラリの使用を宣言する。
+
+```app-blinky/Cargo.toml
+[dependencies.bootloader]
+path = "../bootloader"
+```
+
+`app-blinky/src/main.rs`で次のようにライブラリを使うことができる。
+
+`header_magic`は中二病っぽく、リートコードを使って"bootload"っぽくしてみた。
+
+```app-blinky/src/main.rs
+#[link_section = ".image_header"]
+#[used]
+pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
+    header_magic: 0xb00410ad,
+    header_length: 256,
+    hv_major: 0,
+    hv_minor: 1,
+    iv_major: 0,
+    iv_minor: 1,
+    iv_revision: 0,
+    iv_build: 1234,
+    image_length: 0xe_0000,
+    signature: [0u8; 128],
+    padding: [0u8; 104],
+    crc32: 0,
+};
+```
+
+また、`app-blinky`側で`cargo run`しても、イメージの書き込み→リセットして実行しても、`bootloader`が実行されて、`app-blinky`が実行されない。書き込むだけのシェルスクリプト(`write_image.sh`)を作成しておく。
+
+
+```
+#!/bin/bash
+
+set -uex
+
+arch=${arch:-"thumbv6m-none-eabi"}
+debug=${debug:-"debug"}
+
+probe-rs download --chip RP2040 --protocol swd ../target/${arch}/${debug}/app-blinky
+probe-rs reset --chip RP2040 --protocol swd
+```
+
+## メモリからの読み込み
+
+すでに、上でコード例をあげたが、任意のアドレスから読み込むには`core::ptr::read_volatile`が使える。アドレスの即値は `as *const T`に強制キャストする。`ImageHeader`は`#[repl(C)]`として宣言してあるので、C的なメモリ配置となり、`read_volatile`したメモリイメージを、そのままキャストすれば構造体にマップされる。
+
+```bootloader/src/image_header.rs
+use core::ptr;
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct ImageHeader {
+...
+}
+
+pub fn load_from_addr(addr: u32) -> ImageHeader {
+    unsafe { ptr::read_volatile(addr as *const ImageHeader) }
+}
+```
+
+
+```
+❯ cd app-blinky 
+
+❯ cargo build                   # app-blinkyをビルドする
+package:   /Users/nkon/src/rust/boot-k/rp2040-project-template/Cargo.toml
+workspace: /Users/nkon/src/rust/boot-k/Cargo.toml
+   Compiling app-blinky v0.1.0 (/Users/nkon/src/rust/boot-k/app-blinky)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.15s
+
+❯ ./write_image.sh              # app-blinkyのイメージを書き込む
++ probe-rs download --chip RP2040 --protocol swd ../target/thumbv6m-none-eabi/debug/app-blinky
+     Erasing sectors ✔ [00:00:00] [] 56.00 KiB/56.00 KiB @ 65.91 KiB/s (eta 0s )
+ Programming pages   ✔ [00:00:01] [] 56.00 KiB/56.00 KiB @ 30.11 KiB/s (eta 0s )    Finished in 2.744s
++ probe-rs reset --chip RP2040 --protocol swd
+
+❯ cd ../bootloader   
+
+❯ cargo run                     # bootloader をビルド＆実行する
+package:   /Users/nkon/src/rust/boot-k/rp2040-project-template/Cargo.toml
+workspace: /Users/nkon/src/rust/boot-k/Cargo.toml
+    Finished dev [unoptimized + debuginfo] target(s) in 0.03s
+     Running `probe-rs run --chip RP2040 --protocol swd /Users/nkon/src/rust/boot-k/target/thumbv6m-none-eabi/debug/bootloader`
+     Erasing sectors ✔ [00:00:00] [] 64.00 KiB/64.00 KiB @ 64.89 KiB/s (eta 0s )
+ Programming pages   ✔ [00:00:02] [] 64.00 KiB/64.00 KiB @ 30.22 KiB/s (eta 0s )    Finished in 3.137s
+INFO  Program start
+└─ bootloader::__cortex_m_rt_main @ src/main.rs:31  
+INFO  b00410ad 100 0 1          # magicなどの値が正常に読めている
+└─ bootloader::__cortex_m_rt_main @ src/main.rs:86  
+0
+```
+
+
+
+## イメージに署名する
+
+## イメージの署名を検証する
+
+
+## QSPI フラッシュメモリの操作
+
+

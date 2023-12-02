@@ -17,6 +17,9 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 rp2040-hal = { version="0.9", features=["rt", "critical-section-impl"] }
 rp2040-boot2 = "0.3"
 
+[dependencies.bootloader]
+path = "../bootloader"
+
 # cargo build/run
 [profile.dev]
 codegen-units = 1

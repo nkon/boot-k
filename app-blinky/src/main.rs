@@ -4,6 +4,7 @@
 #![no_std]
 #![no_main]
 
+use bootloader::image_header;
 use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
@@ -22,7 +23,20 @@ use rp2040_hal::{
 
 #[link_section = ".image_header"]
 #[used]
-pub static IMAGE_HEADER: [u8; 256] = [0u8; 256];
+pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
+    header_magic: 0xb00410ad,
+    header_length: 256,
+    hv_major: 0,
+    hv_minor: 1,
+    iv_major: 0,
+    iv_minor: 1,
+    iv_revision: 0,
+    iv_build: 1234,
+    image_length: 0xe_0000,
+    signature: [0u8; 128],
+    padding: [0u8; 104],
+    crc32: 0,
+};
 
 #[entry]
 fn main() -> ! {
@@ -89,4 +103,3 @@ fn main() -> ! {
         delay.delay_ms(500);
     }
 }
-
