@@ -34,7 +34,10 @@
   - [ヘッダ構造体の定義とマップ](#ヘッダ構造体の定義とマップ)
     - [lib クレート、bin クレート](#lib-クレートbin-クレート)
   - [メモリからの読み込み](#メモリからの読み込み)
-  - [イメージに署名する](#イメージに署名する)
+- [マルチ・ターゲット・ライブラリ](#マルチターゲットライブラリ)
+    - [プロファイル](#プロファイル)
+    - [イメージ操作ツール](#イメージ操作ツール)
+    - [クロスアーキテクチャライブラリ](#クロスアーキテクチャライブラリ)
   - [イメージの署名を検証する](#イメージの署名を検証する)
   - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
 
@@ -946,6 +949,8 @@ Disconnected.
 
 rustのプラクティスとして、「実行ファイルを作る場合でも、ほとんどの機能をライブラリとして実装する」というものがある。`main.rs`からは実行ファイルが作られ、`lib.rs`からはライブラリが作られる。実行ファイルは実行形態なので結合テストができないがライブラリは結合テストが実施される。そのために、`bootloader/src`の下に、`lib.rs`とライブラリの実装(この場合は`image_header.rs`)を作る、
 
+[TRPL 12.3](https://doc.rust-jp.rs/book-ja/ch12-03-improving-error-handling-and-modularity.html)参照
+
 ```
  tre 
 [0] .
@@ -1078,7 +1083,6 @@ pub fn load_from_addr(addr: u32) -> ImageHeader {
 }
 ```
 
-
 ```
 ❯ cd app-blinky 
 
@@ -1110,9 +1114,125 @@ INFO  b00410ad 100 0 1          # magicなどの値が正常に読めている
 0
 ```
 
+# マルチ・ターゲット・ライブラリ
+
+いろいろ複雑になってきたので、ワーク・スペースを整理する。次のような構成にしたい。
+
+とくに`blxlib`というライブラリは、`bootloader`や`app-blinky`のようなターゲット上で動作するバイナリからも、`bintool`のようなネイティブで動作するバイナリからも利用可能な、どちらのアーキテクチャに向けてもビルドすることができる、ライブラリだ。
+
+たとえば、イメージヘッダのような情報は、ターゲット上で動くバイナリも必要としているし、ネイティブ環境で動くバイナリ操作ツールも必要としている。同一ソースであることで移植バグが防げる。
+
+また、ターゲット環境向けのライブラリであっても、ネイティブ向けにもビルドすることができれば、論理的なテストは `cargo test` でネイティブ環境で実行することができる。
+
+このような、マルチ・ターゲット・ライブラリは、Rustのクロス・コンパイル能力を活用している。
+
+* bootloader : bootloaderプロジェクト。thumbv6m の実行ファイルを生成する
+    + bootloader/src/main.rs : bootloaderバイナリの起点となるファイル
+        - `use bootloader;`
+        - `use blxlib;`
+    + bootloader/src/lib.rs : bootloaderライブラリの起点となるファイル
+* app-blinky: app-blinyプロジェクト。bootloaderから起動されるアプリケーション。thumbv6mの実行ファイルを生成する。
+    + app-blinky/src/main.rs : app-blinkyバイナリの起点となるファイル。
+        - `use bootloader;`
+        - `use blxlib;`
+* bintool: bintoolプロジェクト。バイナリ操作ツールのネイティブの実行ファイルを生成する。
+    + bintool/src/main.rs: bintoolバイナリの起点となるファイル。
+        - `use blxlib;`
+* blxlib : blxlibプロジェクト。クロスプラットフォームライブラリ。ソースコードは共通でthumbv6m(bootloader, app-blinky)にも、ネイティブツール(bintool)にもビルドできる。
+    + blxlib/src/lib.rs: blxlib : ライブラリの起点となるファイル。
+    + blxlib/src/image_header.rs : イメージヘッダの構造を定める。bootloader, app-blinky, bintoolで使われる。
+* tools : python などのスクリプト・ツール(予定)
+* rp2040-project-template : 参照用のプロジェクトテンプレート。ワークスペース外。
+
+```
+├── bootloader                # bootloader プロジェクト thumbv6m, bin
+│  ├── src
+│  │  ├── main.rs           # bootloader(bin)
+│  │  └── lib.rs            # bootloader(lib)
+├── app-blinky                # app-blinky プロジェクト thumbv6m, bin
+│  ├── src
+│  │  └── main.rs
+├── blxlib                    # blxlib プロジェクト thumbv6m, lib
+│  ├── src
+│  │  ├── lib.rs            # blxlib(lib)
+│  │  └── image_header.rs
+├── bintool                   # bintool プロジェクト native, bin
+│  ├── src
+│  │  └── main.rs
+├── tools                     # スクリプト類
+│  ├── requirments.txt
+│  └── bintool.py
+├── target                    # workspace のビルドディレクトリ
+│  ├── thumbv6m-none-eabi    # thumbv6m 版のビルドディレクトリ
+│  │  ├── debug
+│  │  │  ├── libbootloader.rlib  # bootloader(lib) thumbv6m, lib
+│  │  │  ├── bootloader    # bootloader(bin) thumbv6m, bin
+│  │  │  ├── app-blinky    # app-blinky thumbv6m, bin
+│  ├── debug                 # ネイティブ版のビルドディレクトリ
+│  │  ├── libblxlib.rlib    # blxlib(lib) ネイティブ
+│  │  ├── bintool           # bintool(bin) ネイティブ
+├── rp2040-project-template   # テンプレート・プロジェクト(workspace外)
+│  ├── target                # ワークスペース外なので、サブディレクトリでビルド
+│  │  ├── thumbv6m-none-eabi
+│  │  │  ├── debug
+│  │  │  │  ├── rp2040-project-template # rp2040-project-template thumbv6m, bin
+│  ├── src
+│  │  └── main.rs
+```
+
+### プロファイル
+
+`rp2040-project-template`からコピーしたばかりの`bootloader/`や`app-blinky`などのサブプロジェクトでビルドするとつぎのようにwarningが出る。
+
+```
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /.../boot-k/bootloader/Cargo.toml
+workspace: /.../boot-k/Cargo.toml
+```
+
+メッセージに書いてあるように、`bootloader/Cargo.toml`に書かれている`[profile]`関係のセクションを、ワークスペース・ルートの`Cargo.toml`に移動する。`app-blinky/Cargo.toml`についても同様。
+
+### イメージ操作ツール
+
+今の段階ではスケルトンだが、将来的に`bintool`というイメージ作成ツールを構想している。
+`app-blinky`の実行ファイルに署名したり、アップデート用のイメージを生成したりするツールとしたい。`bintool`はネイティブ(今の場合は aarch64-darwin)で動作するツール。
+
+```
+❯ cargo new bintool --bin
+❯ cd bintool
+❯ cargo run  
+Hello, world!
+```
 
 
-## イメージに署名する
+### クロスアーキテクチャライブラリ
+
+イメージヘッダの情報は、bootloaderも知る必要があるし、app-blinkyも知る必要がある。また、bintoolにも共有したい。
+
+ターゲット向けのライブラリは、`bootloader/src/lib.rs`に集約すれば良いが、クロス部分は別のクレート(blxlib)を作る。
+
+
+```
+❯ cargo new blxlib --lib
+## メッセージで出ているように、workspaceの`Cargo.toml`の`workspace.members`に`blxlib`を追加する。
+❯ cd blxlib 
+❯ cargo test
+running 1 test
+test tests::it_works ... ok
+```
+
+生成後のデフォルトで、ネイティブでのテストがパスする状態になっている。
+
+これを、次のようにすれば bootloaderからも使える。
+
+```bootloader/Cargo.toml
+[dependencies.blxlib]
+path = "../blxlib"
+```
+
+```bootloader/src/main.rs
+use blxlib::image_header;
+```
 
 ## イメージの署名を検証する
 

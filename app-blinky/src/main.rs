@@ -4,7 +4,7 @@
 #![no_std]
 #![no_main]
 
-use bootloader::image_header;
+use blxlib::image_header;
 use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;

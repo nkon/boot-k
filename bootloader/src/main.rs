@@ -9,7 +9,7 @@ use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
 // use embedded_hal::digital::v2::OutputPin;
-use bootloader::image_header;
+use blxlib::image_header;
 use panic_probe as _;
 
 use rp2040_hal::{
