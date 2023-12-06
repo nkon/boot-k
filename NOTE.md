@@ -917,7 +917,9 @@ app-blinky off!
 Disconnected.
 ```
 
-# app-blinkyの署名を検証する
+# app-blinkyのイメージヘッダ
+
+ブートローダがブートするアプリケーションは、単なる実行イメージだけでなく、付加的な情報をイメージヘッダとして保持させる。
 
 ## ヘッダ構造体の定義とマップ
 
@@ -1051,6 +1053,8 @@ pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
 ```
 
 また、`app-blinky`側で`cargo run`しても、イメージの書き込み→リセットして実行しても、`bootloader`が実行されて、`app-blinky`が実行されない。書き込むだけのシェルスクリプト(`write_image.sh`)を作成しておく。
+
+本来は`probe-rs`が提供する`cargo flash`がその役目を果たすはずだが、なぜかうまく動かない。しかも、失敗した以降、デバッガと全てのSWD通信がハングアップする。
 
 
 ```
@@ -1211,6 +1215,7 @@ Hello, world!
 
 ターゲット向けのライブラリは、`bootloader/src/lib.rs`に集約すれば良いが、クロス部分は別のクレート(blxlib)を作る。
 
+これは、ツールなどのネイティブ環境だけでなく、`bootloader`のような組み込み環境でも使われるので、ライブラリ全体が`#![no_std]`である必要がある。
 
 ```
 ❯ cargo new blxlib --lib
@@ -1234,9 +1239,84 @@ path = "../blxlib"
 use blxlib::image_header;
 ```
 
-## イメージの署名を検証する
+# イメージの署名を検証する
 
+## probe-rsでバイナリを書き込む
 
-## QSPI フラッシュメモリの操作
+イメージを直接操作するので、コンパイラのアウトプット(ELF)を`objcopy`でバイナリ形式にする=>バイナリを編集する=>probe-rsでバイナリを書き込む、というように変更する。
+
+cargo-binutilsのobjcopyは、なぜかうまく動かなかったので、バラのbinutilsをインストールする。
+
+```
+❯ brew install arm-none-eabi-binutils
+```
+
+`arm-none-eabi-objcopy`で `-O binary`を指定すれば、バイナリフォーマットを得ることができる。これは、メモリイメージをベタ書きしたもの。
+
+```
+arm-none-eabi-objcopy -O binary ../target/${arch}/${debug}/app-blinky ../target/${arch}/${debug}/app-blinky.bin
+```
+
+<<<ここで、イメージを編集する:後述>>>
+
+probe-rs はELFだけでなくバイナリも書き込めるが、ドキュメントはなく、ソースを掘る必要がある。`--format bin`でバイナリフォーマットであることを明示し、`--base-address`オプションで開始アドレスを指定(バイナリフォーマットは開始アドレスの情報が含まれていない)、`--skip`オプションで、イメージ先頭のスキップする長さを指定する。
+
+```
+probe-rs download --chip RP2040 --protocol swd --format bin --base-address 0x10020000 --skip -0 ../target/${arch}/${debug}/app-blinky.base
+```
+
+## RSAとCRCのライブラリ
+
+署名機能のために組み込み可能なRSAライブラリのRust実装を探してみた。良さそうなのは次の2つ。
+
+* [RustCrypt](https://github.com/RustCrypto/RSA)。Pure RustのRSAライブラリ。`no_std`対応は[パッチ](https://github.com/RustCrypto/RSA/pull/22)があるが、現在の対応についてはドキュメントが見つけられなかった。
+* もう一つは[mbedtlsのRustラッパー](https://github.com/fortanix/rust-mbedtls)。ビルドが複雑になってしまう。
+
+とりあえず、当初計画していたRSAの署名はいったん置いておいて、CRC32のチェックだけを実装することにする。
+
+CRC32のライブラリは色々探してみたが、次が良さそう。
+
+* [const-crc32](https://git.shipyard.rs/jstrong/const-crc32)。`const fn`で固定文字列のCRC32を計算するクレートだが、クレート計算部分がシンプルなので、可変文字列対応に移植するのも容易。テストケースを書いて、[CRC計算機](https://crccalc.com/?crc=0x00,0x00,0x00,0x00&method=crc32&datatype=hex&outtype=0)のCRC32(いくつか種類があるが無印のもの)との結果(Result列)を比較しておく。
+
+```
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_crc32() {
+        let input = [0u8, 0u8, 0u8, 0u8];
+        let result = crc32(&input);
+        // https://crccalc.com/?crc=0x00,0x00,0x00,0x00&method=crc32&datatype=hex&outtype=0
+        assert_eq!(result, 0x2144DF1C);
+
+        // https://crccalc.com/?crc=hoge&method=crc32&datatype=ascii&outtype=0
+        let input = "hoge".as_bytes();
+        let result = crc32(&input);
+        assert_eq!(result, 0x8B39E45A);
+    }
+}
+```
+テストは普通にホスト・ネイティブ環境で実行できる。
+
+```
+❯ cargo test 
+   Compiling blxlib v0.1.0 (/.../boot-k/blxlib)
+    Finished test [optimized + debuginfo] target(s) in 0.32s
+     Running unittests src/lib.rs (/.../boot-k/target/debug/deps/blxlib-7519cf517afeeddd)
+
+running 3 tests
+test crc32::tests::test_crc32 ... ok
+test image_header::tests::test_is_correct_magic ... ok
+test image_header::tests::test_set_crc32 ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests blxlib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
 
 
