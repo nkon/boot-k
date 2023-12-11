@@ -9,7 +9,7 @@ use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
 // use embedded_hal::digital::v2::OutputPin;
-use blxlib::image_header;
+use blxlib::{crc32, image_header};
 use panic_probe as _;
 
 use rp2040_hal::{
@@ -24,7 +24,14 @@ use rp2040_hal::{
 
 #[link_section = ".boot2"]
 #[used]
-pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
+pub static BOOT_LOADER: [u8; image_header::HEADER_LENGTH as usize] =
+    rp2040_boot2::BOOT_LOADER_W25Q080;
+
+fn halt() -> ! {
+    loop {
+        cortex_m::asm::wfi();
+    }
+}
 
 #[entry]
 fn main() -> ! {
@@ -83,10 +90,50 @@ fn main() -> ! {
     let mut _led_pin = pins.gpio25.into_push_pull_output();
 
     let ih = image_header::load_from_addr(0x1002_0000);
+    info!("header_magic: {:04x}", ih.header_magic);
+    info!("header_length: {}", ih.header_length);
+    info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
     info!(
-        "{:x} {:x} {:x} {:x}",
-        ih.header_magic, ih.header_length, ih.hv_major, ih.hv_minor
+        "iv: {}.{}.{}-{:08x}",
+        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
     );
+    info!("image_length: {:04x}", ih.image_length);
+    info!("payload_crc: {:04x}", ih.payload_crc);
+    info!("crc32: {:04x}", ih.crc32);
+
+    // validate header
+    if !ih.is_correct_magic() {
+        error!("header=magic is not correct: {:04x}", ih.header_magic);
+        halt();
+    } else {
+        info!("header_magic is correct: {:04x}", ih.header_magic)
+    }
+    if ih.header_length != image_header::HEADER_LENGTH {
+        error!("header_length is not correct: {:04x}", ih.header_length);
+        halt();
+    } else {
+        info!("header_length is correct: {:04x}", ih.header_length)
+    }
+    if !ih.is_correct_crc() {
+        error!("crc32 is not correct: {:04x}", ih.crc32);
+        halt();
+    } else {
+        info!("crc32 is correct: {:04x}", ih.crc32)
+    }
+    let slice = core::ptr::slice_from_raw_parts(
+        (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
+        ih.image_length as usize,
+    );
+    let payload_crc = crc32::crc32(unsafe { &*slice });
+    if ih.payload_crc != payload_crc {
+        error!("payload_crc is not correct: {:04x}", ih.payload_crc);
+        halt();
+    } else {
+        info!("payload_crc is correct: {:04x}", ih.payload_crc)
+    }
+
+    uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
+    uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
 
     delay.delay_ms(500);
 
@@ -102,11 +149,6 @@ fn main() -> ! {
     };
 
     loop {
-        // uart.write_full_blocking(b"bootloader on!\r\n");
-        // led_pin.set_high().unwrap();
-        // delay.delay_ms(500);
-        // uart.write_full_blocking(b"bootloader off!\r\n");
-        // led_pin.set_low().unwrap();
-        // delay.delay_ms(500);
+        cortex_m::asm::wfi();
     }
 }

@@ -25,16 +25,17 @@ use rp2040_hal::{
 #[used]
 pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
     header_magic: 0xb00410ad,
-    header_length: 256,
+    header_length: image_header::HEADER_LENGTH,
     hv_major: 0,
     hv_minor: 1,
     iv_major: 0,
     iv_minor: 1,
-    iv_revision: 0,
+    iv_patch: 0,
     iv_build: 1234,
     image_length: 0xe_0000,
     signature: [0u8; 128],
-    padding: [0u8; 104],
+    payload_crc: 0,
+    padding: [0u8; 100],
     crc32: 0,
 };
 

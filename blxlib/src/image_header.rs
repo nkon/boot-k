@@ -1,6 +1,8 @@
 use crate::crc32::crc32;
 use core::ptr;
 
+pub const HEADER_LENGTH: u16 = 256;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ImageHeader {
@@ -9,10 +11,10 @@ pub struct ImageHeader {
     pub hv_major: u8,       // +1 = 7
     pub hv_minor: u8,       // +1 = 8
 
-    pub iv_major: u8,     // +1 = 9
-    pub iv_minor: u8,     // +1 = 10
-    pub iv_revision: u16, // +2 = 12
-    pub iv_build: u32,    // +4 = 16
+    pub iv_major: u8,  // +1 = 9
+    pub iv_minor: u8,  // +1 = 10
+    pub iv_patch: u16, // +2 = 12
+    pub iv_build: u32, // +4 = 16
 
     pub image_length: u32,    // +4 = 20
     pub signature: [u8; 128], // +128 = 148
@@ -48,12 +50,12 @@ impl ImageHeader {
     pub fn new() -> Self {
         ImageHeader {
             header_magic: 0xb00410ad,
-            header_length: 256,
+            header_length: HEADER_LENGTH,
             hv_major: 0,
             hv_minor: 0,
             iv_major: 0,
             iv_minor: 0,
-            iv_revision: 0,
+            iv_patch: 0,
             iv_build: 0,
             image_length: 0xe_0000,
             signature: [0u8; 128],
@@ -66,9 +68,14 @@ impl ImageHeader {
         self.header_magic == 0xb00410ad
     }
     pub fn set_crc32(&mut self) {
-        let buf = as_bytes_with_len(self, 256 - 4);
+        let buf = as_bytes_with_len(self, HEADER_LENGTH as usize - 4);
         let crc32 = crc32(buf);
         self.crc32 = crc32;
+    }
+    pub fn is_correct_crc(&self) -> bool {
+        let buf = as_bytes_with_len(self, HEADER_LENGTH as usize - 4);
+        let crc32 = crc32(buf);
+        self.crc32 == crc32
     }
 }
 
@@ -96,7 +103,7 @@ mod tests {
         ih.hv_minor = 0;
         ih.iv_major = 0;
         ih.iv_minor = 0;
-        ih.iv_revision = 0;
+        ih.iv_patch = 0;
         ih.iv_build = 0;
         ih.image_length = 0;
         ih.signature = [0u8; 128];

@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4.4.10", features = ["derive"] }
+getopts = "0.2"
+regex = "1.10.2"
+# rsa = "0.9.6"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

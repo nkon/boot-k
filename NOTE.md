@@ -30,7 +30,7 @@
   - [boot2 が、自分自身のコードからアプリケーション(この場合は bootloader/main.rs#main())に制御を移す方法を調べる](#boot2-が自分自身のコードからアプリケーションこの場合は-bootloadermainrsmainに制御を移す方法を調べる)
     - [参考](#参考)
   - [`bootloader`が`app-blinky`を呼ぶ](#bootloaderがapp-blinkyを呼ぶ)
-- [app-blinkyの署名を検証する](#app-blinkyの署名を検証する)
+- [app-blinkyのイメージヘッダ](#app-blinkyのイメージヘッダ)
   - [ヘッダ構造体の定義とマップ](#ヘッダ構造体の定義とマップ)
     - [lib クレート、bin クレート](#lib-クレートbin-クレート)
   - [メモリからの読み込み](#メモリからの読み込み)
@@ -38,8 +38,14 @@
     - [プロファイル](#プロファイル)
     - [イメージ操作ツール](#イメージ操作ツール)
     - [クロスアーキテクチャライブラリ](#クロスアーキテクチャライブラリ)
-  - [イメージの署名を検証する](#イメージの署名を検証する)
-  - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
+- [イメージの署名を検証する](#イメージの署名を検証する)
+  - [probe-rsでバイナリを書き込む](#probe-rsでバイナリを書き込む)
+  - [RSAとCRCのライブラリ](#rsaとcrcのライブラリ)
+  - [署名ツール](#署名ツール)
+    - [パッケージのバージョンを得る方法](#パッケージのバージョンを得る方法)
+    - [イメージの作成と書き込み](#イメージの作成と書き込み)
+    - [bootloaderでバリデーションする](#bootloaderでバリデーションする)
+- [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
 
 
 # ワークスペースの作成
@@ -1259,7 +1265,11 @@ arm-none-eabi-objcopy -O binary ../target/${arch}/${debug}/app-blinky ../target/
 
 <<<ここで、イメージを編集する:後述>>>
 
-probe-rs はELFだけでなくバイナリも書き込めるが、ドキュメントはなく、ソースを掘る必要がある。`--format bin`でバイナリフォーマットであることを明示し、`--base-address`オプションで開始アドレスを指定(バイナリフォーマットは開始アドレスの情報が含まれていない)、`--skip`オプションで、イメージ先頭のスキップする長さを指定する。
+probe-rs はELFだけでなくバイナリも書き込めるが、詳細なドキュメントはなく、ソースを掘る必要がある。
+
++ `--format bin`でバイナリフォーマットであることを明示
++ `--base-address`オプションで開始アドレスを指定(バイナリフォーマットは開始アドレスの情報が含まれていない)
++ `--skip`オプションで、イメージ先頭のスキップする長さを指定
 
 ```
 probe-rs download --chip RP2040 --protocol swd --format bin --base-address 0x10020000 --skip -0 ../target/${arch}/${debug}/app-blinky.base
@@ -1318,5 +1328,198 @@ running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
+
+## 署名ツール
+
+共用している`blxlib`を使って、ネイティブ環境のCLIで動く署名ツール(イメージ操作ツール)を作る。
+
+* `bintool -c sign`: (署名のかわりに)ペイロードのCRCを計算して、ヘッダの`payload_crc`に書き込む。
+* `bintool -c crc`: ヘッダのCRCを計算し、ヘッダの`crc32`に書き込む。
+* `bintool -c version`: `app-blinky`のバージョンを取得し、ヘッダに埋め込む。`ih_build`は`git`のコミットハッシュの先頭32ビットを使用する。
+* `bintool -c all`: 上のすべてを行う。
+* `bintool -c info`: ヘッダの情報をプリントする。
+
+### パッケージのバージョンを得る方法
+
+`cargo pkgid --manifest-path=...../Cargo.toml`で、その`Cargo.toml`が作るパッケージのバージョン情報を得ることができる。そこから`regex`でバージョン番号を切り出せば、`app-blinky`のバージョン番号を得ることができる。
+
+同様にして git のコミットハッシュ(これはプロジェクト全体のもの)も取得してヘッダに埋め込んでおく。
+
+```bintool/src/main.rc
+fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    println!("\n*** run_version ***\n");
+    let mut in_file = File::open(in_file_path)?;
+    let mut in_buf = Vec::<u8>::new();
+    let _ = in_file.read_to_end(&mut in_buf)?;
+
+    let header_len = std::mem::size_of::<ImageHeader>();
+
+    let buf_ih = &in_buf[0..header_len];
+    let buf_payload = &in_buf[header_len..];
+
+    let mut ih = image_header::load_from_buf(buf_ih);
+
+    // println!("{:?}",ih);
+
+    let commit_hash = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("failed to execute command \"git rev-parse HEAD\"");
+    let commit_hash = String::from_utf8(commit_hash.stdout.to_vec())
+        .unwrap()
+        .replace('\n', "");
+    println!("commit hash={}", commit_hash);
+    let hash_regex = Regex::new(r"^(.{8})").unwrap();
+    match hash_regex.captures(&commit_hash) {
+        Some(caps) => {
+            println!("build: {}", &caps[0]);
+            ih.iv_build = u32::from_str_radix(&caps[0], 16)?;
+        }
+        None => println!("Not found"),
+    }
+
+    let pkg_info = Command::new("cargo")
+        .args(["pkgid", "--manifest-path=../app-blinky/Cargo.toml"])
+        .output()
+        .expect("fail to execute command \"cargo pkgid --manifest-path=../app-blinky/Cargo.toml\"");
+    let pkg_info = String::from_utf8(pkg_info.stdout.to_vec())
+        .unwrap()
+        .replace('\n', "");
+    println!("pkg_info={}", pkg_info);
+    let pkg_regex = Regex::new(r"(\d+)\.(\d+)\.(\d+)$").unwrap();
+    match pkg_regex.captures(&pkg_info) {
+        Some(caps) => {
+            println!("major: {}", &caps[1]);
+            println!("minor: {}", &caps[2]);
+            println!("patch {}", &caps[3]);
+            ih.iv_major = caps[1].parse::<u8>()?;
+            ih.iv_minor = caps[2].parse::<u8>()?;
+            ih.iv_patch = caps[3].parse::<u16>()?;
+        }
+        None => println!("Not found"),
+    }
+
+    ih.set_crc32();
+
+    let mut out_file = File::create(out_file_path)?;
+    out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
+    out_file.write_all(buf_payload)?;
+
+    Ok(())
+}
+```
+
+
+### イメージの作成と書き込み
+
+bintoolを使って、ヘッダの情報を書き換える。
+
+`debug=release ./build_image.sh` のようにシェル変数を付加すればリリースビルドを生成する。
+
+
+```app-blinky/build_image.sh
+#!/bin/bash
+
+set -uex
+
+arch=${arch:-"thumbv6m-none-eabi"}
+debug=${debug:-"debug"}
+
+if [[ "X$debug" == "Xrelease" ]]; then
+  debug_option="--release"
+fi
+
+debug_option=${debug_option:-""}
+
+cargo build ${debug_option}
+
+arm-none-eabi-objcopy -O binary ../target/${arch}/${debug}/app-blinky ../target/${arch}/${debug}/app-blinky.bin
+cd ../bintool && \
+  cargo run bintool -c all -i ../target/${arch}/${debug}/app-blinky.bin -o ../target/${arch}/${debug}/app-blinky.base && \
+  cargo run bintool -c info -i ../target/${arch}/${debug}/app-blinky.base
+```
+
+`probe-rs`の`--base=address`オプションで、書き込みアドレスを指定する。
+
+`update=update ./build_image.sh` のようにシェル変数を付加すればアップデート領域に書き込む(未実装)。
+
+```app-blinky/write_image.sh
+#!/bin/bash
+
+set -uex
+
+arch=${arch:-"thumbv6m-none-eabi"}
+debug=${debug:-"debug"}
+update=${update:-""}
+
+if [[ "X$debug" == "Xrelease" ]]; then
+  debug_option="--release"
+fi
+
+if [[ "X$update" == "Xupdate" ]]; then
+    base_address="0x10100000"
+else 
+    base_address="0x10020000"
+fi
+
+arch=${arch} debug=${debug} ./build_image.sh
+
+probe-rs download --chip RP2040 --protocol swd \
+  --format bin --base-address ${base_address} --skip 0 \
+  ../target/${arch}/${debug}/app-blinky.base
+probe-rs reset --chip RP2040 --protocol swd
+```
+
+### bootloaderでバリデーションする
+
+```bootloader/src/main.rs
+    let ih = image_header::load_from_addr(0x1002_0000);
+    info!("header_magic: {:04x}", ih.header_magic);
+    info!("header_length: {}", ih.header_length);
+    info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
+    info!(
+        "iv: {}.{}.{}-{:08x}",
+        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    );
+    info!("image_length: {:04x}", ih.image_length);
+    info!("payload_crc: {:04x}", ih.payload_crc);
+    info!("crc32: {:04x}", ih.crc32);
+
+    // validate header
+    if !ih.is_correct_magic() {
+        error!("header=magic is not correct: {:04x}", ih.header_magic);
+        halt();
+    } else {
+        info!("header_magic is correct: {:04x}", ih.header_magic)
+    }
+    if ih.header_length != image_header::HEADER_LENGTH {
+        error!("header_length is not correct: {:04x}", ih.header_length);
+        halt();
+    } else {
+        info!("header_length is correct: {:04x}", ih.header_length)
+    }
+    if !ih.is_correct_crc() {
+        error!("crc32 is not correct: {:04x}", ih.crc32);
+        halt();
+    } else {
+        info!("crc32 is correct: {:04x}", ih.crc32)
+    }
+    let slice = core::ptr::slice_from_raw_parts(
+        (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
+        ih.image_length as usize,
+    );
+    let payload_crc = crc32::crc32(unsafe { &*slice });
+    if ih.payload_crc != payload_crc {
+        error!("payload_crc is not correct: {:04x}", ih.payload_crc);
+        halt();
+    } else {
+        info!("payload_crc is correct: {:04x}", ih.payload_crc)
+    }
+
+    uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
+    uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
+```
+
+# QSPI フラッシュメモリの操作
 
 

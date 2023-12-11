@@ -14,4 +14,6 @@ debug_option=${debug_option:-""}
 cargo build ${debug_option}
 
 arm-none-eabi-objcopy -O binary ../target/${arch}/${debug}/app-blinky ../target/${arch}/${debug}/app-blinky.bin
-### bintool sign -k xxxxx -i ../target/${arch}/${debug}/app-blinky.bin -o ../target/${arch}/${debug}/app-blinky.base
+cd ../bintool && \
+  cargo run bintool -c all -i ../target/${arch}/${debug}/app-blinky.bin -o ../target/${arch}/${debug}/app-blinky.base && \
+  cargo run bintool -c info -i ../target/${arch}/${debug}/app-blinky.base
