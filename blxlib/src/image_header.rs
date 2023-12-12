@@ -2,6 +2,8 @@ use crate::crc32::crc32;
 use core::ptr;
 
 pub const HEADER_LENGTH: u16 = 256;
+pub const HV_MAJOR: u8 = 0;
+pub const HV_MINOR: u8 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -51,8 +53,8 @@ impl ImageHeader {
         ImageHeader {
             header_magic: 0xb00410ad,
             header_length: HEADER_LENGTH,
-            hv_major: 0,
-            hv_minor: 0,
+            hv_major: HV_MAJOR,
+            hv_minor: HV_MINOR,
             iv_major: 0,
             iv_minor: 0,
             iv_patch: 0,

@@ -99,8 +99,6 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
 
     let mut ih = image_header::load_from_buf(buf_ih);
 
-    // println!("{:?}",ih);
-
     let commit_hash = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()

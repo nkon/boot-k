@@ -9,7 +9,10 @@ use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
 // use embedded_hal::digital::v2::OutputPin;
-use blxlib::{crc32, image_header};
+use blxlib::{
+    crc32,
+    image_header::{self, ImageHeader},
+};
 use panic_probe as _;
 
 use rp2040_hal::{
@@ -26,6 +29,44 @@ use rp2040_hal::{
 #[used]
 pub static BOOT_LOADER: [u8; image_header::HEADER_LENGTH as usize] =
     rp2040_boot2::BOOT_LOADER_W25Q080;
+
+fn ih_print(ih: &ImageHeader) {
+    info!("header_magic: {:04x}", ih.header_magic);
+    info!("header_length: {}", ih.header_length);
+    info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
+    info!(
+        "iv: {}.{}.{}-{:08x}",
+        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    );
+    info!("image_length: {:04x}", ih.image_length);
+    info!("payload_crc: {:04x}", ih.payload_crc);
+    info!("crc32: {:04x}", ih.crc32);
+}
+
+fn ih_validate(ih: &ImageHeader) {
+    // validate header
+    if !ih.is_correct_magic() {
+        error!("header=magic is not correct: {:04x}", ih.header_magic);
+        halt();
+    }
+    if ih.header_length != image_header::HEADER_LENGTH {
+        error!("header_length is not correct: {:04x}", ih.header_length);
+        halt();
+    }
+    if !ih.is_correct_crc() {
+        error!("crc32 is not correct: {:04x}", ih.crc32);
+        halt();
+    }
+    let slice = core::ptr::slice_from_raw_parts(
+        (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
+        ih.image_length as usize,
+    );
+    let payload_crc = crc32::crc32(unsafe { &*slice });
+    if ih.payload_crc != payload_crc {
+        error!("payload_crc is not correct: {:04x}", ih.payload_crc);
+        halt();
+    }
+}
 
 fn halt() -> ! {
     loop {
@@ -90,53 +131,16 @@ fn main() -> ! {
     let mut _led_pin = pins.gpio25.into_push_pull_output();
 
     let ih = image_header::load_from_addr(0x1002_0000);
-    info!("header_magic: {:04x}", ih.header_magic);
-    info!("header_length: {}", ih.header_length);
-    info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
-    info!(
-        "iv: {}.{}.{}-{:08x}",
-        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    );
-    info!("image_length: {:04x}", ih.image_length);
-    info!("payload_crc: {:04x}", ih.payload_crc);
-    info!("crc32: {:04x}", ih.crc32);
-
-    // validate header
-    if !ih.is_correct_magic() {
-        error!("header=magic is not correct: {:04x}", ih.header_magic);
-        halt();
-    } else {
-        info!("header_magic is correct: {:04x}", ih.header_magic)
-    }
-    if ih.header_length != image_header::HEADER_LENGTH {
-        error!("header_length is not correct: {:04x}", ih.header_length);
-        halt();
-    } else {
-        info!("header_length is correct: {:04x}", ih.header_length)
-    }
-    if !ih.is_correct_crc() {
-        error!("crc32 is not correct: {:04x}", ih.crc32);
-        halt();
-    } else {
-        info!("crc32 is correct: {:04x}", ih.crc32)
-    }
-    let slice = core::ptr::slice_from_raw_parts(
-        (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
-        ih.image_length as usize,
-    );
-    let payload_crc = crc32::crc32(unsafe { &*slice });
-    if ih.payload_crc != payload_crc {
-        error!("payload_crc is not correct: {:04x}", ih.payload_crc);
-        halt();
-    } else {
-        info!("payload_crc is correct: {:04x}", ih.payload_crc)
-    }
+    ih_print(&ih);
+    ih_validate(&ih);
 
     uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
     uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
 
     delay.delay_ms(500);
 
+    // exec => 0x10020100
+    // stack pointer => VTOR[0] (VTOR=0xe000ed08)
     unsafe {
         asm!(
             "ldr r0, =0x10020100",
@@ -148,7 +152,5 @@ fn main() -> ! {
         );
     };
 
-    loop {
-        cortex_m::asm::wfi();
-    }
+    halt();
 }

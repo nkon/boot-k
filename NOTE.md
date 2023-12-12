@@ -12,7 +12,7 @@
     - [defmt-rtt](#defmt-rtt)
     - [flip-link](#flip-link)
     - [rp-pico(BSP), rp2040-hal(HAL), rp2040-pac(PAC), cortex-m(MAC)](#rp-picobsp-rp2040-halhal-rp2040-pacpac-cortex-mmac)
-    - [rp2040-boot2](#rp2040-boot2)
+    - [`rp2040-boot2`](#rp2040-boot2)
     - [cortex-m-rt](#cortex-m-rt)
       - [リンカ・スクリプト](#リンカスクリプト)
     - [panic-probe](#panic-probe)
@@ -45,6 +45,7 @@
     - [パッケージのバージョンを得る方法](#パッケージのバージョンを得る方法)
     - [イメージの作成と書き込み](#イメージの作成と書き込み)
     - [bootloaderでバリデーションする](#bootloaderでバリデーションする)
+    - [シリアル出力をフォーマットする](#シリアル出力をフォーマットする)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
 
 
@@ -352,9 +353,9 @@ defmt::error!("error");
 
 RP2040がチップの名前、それを使ったボードが Raspberry Pi Picoだ。ボード上には RP2040、W25Q16JV QSPI Flashメモリ、BOOTSEL スイッチ、USBインターフェイス、GPIO インターフェイス、LEDなどが搭載されている。
 
-Embedded Rustでデファクトである rust-embedded プロジェクトのアーキテクチャでは、低レイヤ側から Micro architecture crete(MAC) がコアそのものをサポートし、PAC(Peripheral Access Crate)がペリフェラルへのレジスタアクセスをサポートする。PACはSVD2RUST でSVDから自動生成されたものがベースとなる。SVD(System View Description) はCMSIS-SVDで定められているインターフェイスで、ペリフェラルのレジスタをXMLベースで記述したもの。チップベンダから提供される。
+Embedded Rustにおいてデファクトである rust-embedded プロジェクトのアーキテクチャでは、低レイヤ側から Micro architecture crete(MAC) がコアそのものをサポートし、PAC(Peripheral Access Crate)がペリフェラルへのレジスタアクセスをサポートする。PACはSVD2RUST でSVDから自動生成されたものがベースとなる。SVD(System View Description) はCMSIS-SVDで定められているインターフェイスで、ペリフェラルのレジスタをXMLベースで記述したもの。チップベンダから提供される。
 
-MACとPACの上にHAL(Hardware Abstruction Layer)があり、チップの機能レベル(GPIOなど)のAPIを提供している。
+MACとPACの上にHAL(Hardware Abstraction Layer)があり、チップの機能レベル(GPIOなど)のAPIを提供している。
 
 さらにその上にBSPがボードレベルの機能(LEDやスイッチなど)を提供している。
 
@@ -365,10 +366,10 @@ MACとPACの上にHAL(Hardware Abstruction Layer)があり、チップの機能�
         - PAC(rp2040-pac)
         - MAC(cortex-m)
 
-このテンプレートでは、BSP が rp-pico。それが rp2040-halとrp2040-boot2を読み込む。rp2040-halはrp2040-pacを読み込む。
-また、cortex-MのMACである`cortex-m`も別途読み込まれる。
+このテンプレートでは、BSP に相当するクレートが `rp-pico`。`rp-pico` が `rp2040-hal` と `rp2040-boot2` を読み込む。`rp2040-hal` は `rp2040-pac` を読み込む。
+また、cortex-M の MAC である`cortex-m`も別途読み込まれる。
 
-### rp2040-boot2
+### `rp2040-boot2`
 
 RP2040というチップは、ユーザ・ファームウエア用の内蔵フラッシュが無い。フラッシュはQSPIで外付けされる。外付けされたフラッシュの先頭領域にかかれているブートローダが`rp2040-boot2`だ。ファームウエア本体を残りのQSPIから読み込んで実行する機能を持っている。
 
@@ -510,10 +511,10 @@ rustflags = [
 
 ## 開発のステップ
 
-1. rp2040_project_template をもとに bootloaderを作る。メモリマップは下記の設計にあわせる。
-2. rp2040_project_template をもとに applicationとしてapp-blinkyを作る。
-3. bootloaderから app-blinkyに制御を移す。
-4. bootloaderがapp-blinkyに制御を移す前に .image_header の署名を検証する。
+1. [rp2040_project_template をもとに bootloaderを作る](#bootloader-プロジェクトの作成)。メモリマップは下記の設計にあわせる。
+2. [rp2040_project_template をもとに applicationとしてapp-blinkyを作る](#bootloaderをもとにapp-blinkyを作る)。
+3. [bootloaderから app-blinkyに制御を移す](#bootloaderから-app-blinkyに制御を移す)。
+4. [bootloaderがapp-blinkyに制御を移す前に .image_header の署名を検証する](#イメージの署名を検証する)。
 5. bootloaderをRAMにコピーして実行する。
 6. bootloader は app_updateが存在したら、app_update => application にイメージをコピーして実行する。
 7. イメージのコピーは swap を使って行い、失敗したら、古いイメージに戻して起動する。
@@ -866,6 +867,8 @@ vector_into_flash:
 * `ldmir`はレジスタ復元命令。`POP`のようなもの。`r0`が指し示すアドレスから始まるメモリの内容を、`{r0, r1}`の2つのレジスタに格納する。つまり、`r0`には`r0`が指す`.vector_table[0]`の内容(=SP初期値=`0x2003_fbb8`)が、`r1`には`.vector_table[1]`の内容(=コードの先頭アドレス=`0x1000_01c1`)が格納される。
 * `msr`はスタックポインタを更新する専用命令。`r0`の内容(=SP初期値=`0x2003_ffb8`)が`msp`にセットされる。
 * `bx r1`で`r1`の指すアドレス(=`0x1000_01c1`)にジャンプする。ジャンプの場合、アドレス末尾のビットが`1`だと、それを`0`に変更して、little endian モードで実行する。
+* `.reset_vector`やVTORの設定は`cortex-m-rt`が行っている(上述)。
+
 
 ### 参考
 
@@ -881,31 +884,31 @@ vector_into_flash:
 * インラインアセンブラを使う。
 
 ```rust 
-+use core::arch::asm;
+use core::arch::asm;
 ```
 
 * 次の部分が制御を移す本質。
     + r0 に、移動先のPC(プログラムカウンタ)の値をセット
-    + r1 に、新しいスタックポインタの値をセット
+    + r1 に、VTORのアドレスをセット。`VTOR[0]`が新しいスタックポインタの値となり`msp`にセットされる
     + 今回はアドレステーブルを元に即値で書いたが、移植性をよくするなら各種定数から計算するほうが良い。
 * インラインアセンブラ中では、`fmt!`的に`{}`は変数と解釈されるので、`{{ }}`とエスケープする。
 
 ```rust
-+    unsafe {
-+        asm!(
-+            "ldr r0, =0x10020100",
-+            "ldr r1, =0xe000ed08",
-+            "str r0, [r1]",
-+            "ldmia r0, {{r0, r1}}",
-+            "msr msp, r0",
-+            "bx r1",
-+        );
-+    };
+    unsafe {
+        asm!(
+            "ldr r0, =0x10020100",
+            "ldr r1, =0xe000ed08",
+            "str r0, [r1]",
+            "ldmia r0, {{r0, r1}}",
+            "msr msp, r0",
+            "bx r1",
+        );
+    };
 ```
 
 `cargo run`すると、シリアルコンソールに、`bootloader`のメッセージと`app-blinky`のメッセージが表示される。
 
-これで、`bootloader`が`app-blinky`を起動することができた!!!
+**これで、`bootloader`が`app-blinky`を起動することができた!!!**
 
 ```
 ❯ sudo cu -l /dev/tty.usbmodem13202 -s 115200
@@ -1128,9 +1131,9 @@ INFO  b00410ad 100 0 1          # magicなどの値が正常に読めている
 
 いろいろ複雑になってきたので、ワーク・スペースを整理する。次のような構成にしたい。
 
-とくに`blxlib`というライブラリは、`bootloader`や`app-blinky`のようなターゲット上で動作するバイナリからも、`bintool`のようなネイティブで動作するバイナリからも利用可能な、どちらのアーキテクチャに向けてもビルドすることができる、ライブラリだ。
+とくに`blxlib`というライブラリは、`bootloader`や`app-blinky`のようなターゲット上で動作するバイナリからも、`bintool`のようなネイティブで動作するバイナリからも利用可能な、どちらのアーキテクチャに向けてもビルドすることができるライブラリだ。
 
-たとえば、イメージヘッダのような情報は、ターゲット上で動くバイナリも必要としているし、ネイティブ環境で動くバイナリ操作ツールも必要としている。同一ソースであることで移植バグが防げる。
+たとえば、イメージヘッダのような情報は、ブートローダも、ターゲット上で動くバイナリも必要としているし、ネイティブ環境で動くバイナリ操作ツールも必要としている。同一ソースであることで移植バグが防げる。
 
 また、ターゲット環境向けのライブラリであっても、ネイティブ向けにもビルドすることができれば、論理的なテストは `cargo test` でネイティブ環境で実行することができる。
 
@@ -1350,6 +1353,7 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
     println!("\n*** run_version ***\n");
     let mut in_file = File::open(in_file_path)?;
     let mut in_buf = Vec::<u8>::new();
+    // ファイルの内容をVec<u8>に読み込む。ファイルはバイナリ形式
     let _ = in_file.read_to_end(&mut in_buf)?;
 
     let header_len = std::mem::size_of::<ImageHeader>();
@@ -1357,10 +1361,10 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
     let buf_ih = &in_buf[0..header_len];
     let buf_payload = &in_buf[header_len..];
 
+    // Vec<u8>を ImageHeader 構造体にマップする
     let mut ih = image_header::load_from_buf(buf_ih);
 
-    // println!("{:?}",ih);
-
+    // git rev-parse HEAD コマンドでハッシュを得る
     let commit_hash = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()
@@ -1368,16 +1372,16 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
     let commit_hash = String::from_utf8(commit_hash.stdout.to_vec())
         .unwrap()
         .replace('\n', "");
-    println!("commit hash={}", commit_hash);
+    // regex でハッシュの先頭8文字を取り出す
     let hash_regex = Regex::new(r"^(.{8})").unwrap();
     match hash_regex.captures(&commit_hash) {
         Some(caps) => {
-            println!("build: {}", &caps[0]);
             ih.iv_build = u32::from_str_radix(&caps[0], 16)?;
         }
         None => println!("Not found"),
     }
 
+    // cargo pkgid --manifest-path でapp-blinkyのバージョン(Cargo.tomlで定義されている)を取り出す
     let pkg_info = Command::new("cargo")
         .args(["pkgid", "--manifest-path=../app-blinky/Cargo.toml"])
         .output()
@@ -1385,13 +1389,10 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
     let pkg_info = String::from_utf8(pkg_info.stdout.to_vec())
         .unwrap()
         .replace('\n', "");
-    println!("pkg_info={}", pkg_info);
+    // regexでバージョンをパース
     let pkg_regex = Regex::new(r"(\d+)\.(\d+)\.(\d+)$").unwrap();
     match pkg_regex.captures(&pkg_info) {
         Some(caps) => {
-            println!("major: {}", &caps[1]);
-            println!("minor: {}", &caps[2]);
-            println!("patch {}", &caps[3]);
             ih.iv_major = caps[1].parse::<u8>()?;
             ih.iv_minor = caps[2].parse::<u8>()?;
             ih.iv_patch = caps[3].parse::<u16>()?;
@@ -1399,8 +1400,10 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
         None => println!("Not found"),
     }
 
+    // 中身が変わっているのでCRC32を計算しなおす
     ih.set_crc32();
 
+    // ファイルにバイナリを書き出す
     let mut out_file = File::create(out_file_path)?;
     out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
     out_file.write_all(buf_payload)?;
@@ -1412,7 +1415,7 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
 
 ### イメージの作成と書き込み
 
-bintoolを使って、ヘッダの情報を書き換える。
+bintoolを使って、ヘッダの情報を書き換える。そのために`cargo build`のラッパーとなるスクリプトを作成。
 
 `debug=release ./build_image.sh` のようにシェル変数を付加すればリリースビルドを生成する。
 
@@ -1489,20 +1492,14 @@ probe-rs reset --chip RP2040 --protocol swd
     if !ih.is_correct_magic() {
         error!("header=magic is not correct: {:04x}", ih.header_magic);
         halt();
-    } else {
-        info!("header_magic is correct: {:04x}", ih.header_magic)
     }
     if ih.header_length != image_header::HEADER_LENGTH {
         error!("header_length is not correct: {:04x}", ih.header_length);
         halt();
-    } else {
-        info!("header_length is correct: {:04x}", ih.header_length)
     }
     if !ih.is_correct_crc() {
         error!("crc32 is not correct: {:04x}", ih.crc32);
         halt();
-    } else {
-        info!("crc32 is correct: {:04x}", ih.crc32)
     }
     let slice = core::ptr::slice_from_raw_parts(
         (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
@@ -1512,12 +1509,42 @@ probe-rs reset --chip RP2040 --protocol swd
     if ih.payload_crc != payload_crc {
         error!("payload_crc is not correct: {:04x}", ih.payload_crc);
         halt();
-    } else {
-        info!("payload_crc is correct: {:04x}", ih.payload_crc)
     }
 
     uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
     uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
+```
+
+### シリアル出力をフォーマットする
+
+どのみち `app-blinky`では defmt-rttの出力が見えなくなっているので、シリアル出力をフォーマットできるようにする。
+
+`core::fmt::Write`をインポートする。
+
+```
++use core::fmt::Write;
+```
+
+`uart` オブジェクトは `mut`で作っておく
+
+```
+-    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
++    let mut uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+         .enable(
+             UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
+             clocks.peripheral_clock.freq(),
+         )
+         .unwrap();
+```
+
+* `writeln!`を使う。第一引数は出力先。
+* 次の行に行くのが`\n`(`writeln!`の場合は自動で付加される)だが、行頭に戻るのに`\r`も必要。
+* `unwrap()`
+
+
+```
+-    uart.write_full_blocking(b"app-blinky debug build\r\n");
++    writeln!(&mut uart, "app-blinky debug build\r").unwrap();
 ```
 
 # QSPI フラッシュメモリの操作

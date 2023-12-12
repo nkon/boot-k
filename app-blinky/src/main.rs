@@ -5,9 +5,9 @@
 #![no_main]
 
 use blxlib::image_header;
+use core::fmt::Write;
 use cortex_m_rt::entry;
-use defmt::*;
-use defmt_rtt as _;
+use defmt_rtt; // used by panic-probe
 use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
 
@@ -26,12 +26,12 @@ use rp2040_hal::{
 pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
     header_magic: 0xb00410ad,
     header_length: image_header::HEADER_LENGTH,
-    hv_major: 0,
-    hv_minor: 1,
+    hv_major: image_header::HV_MAJOR,
+    hv_minor: image_header::HV_MINOR,
     iv_major: 0,
     iv_minor: 1,
     iv_patch: 0,
-    iv_build: 1234,
+    iv_build: 0,
     image_length: 0xe_0000,
     signature: [0u8; 128],
     payload_crc: 0,
@@ -41,7 +41,6 @@ pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
 
 #[entry]
 fn main() -> ! {
-    info!("App blinky start");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -73,20 +72,19 @@ fn main() -> ! {
     // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
     let uart_pins = (pins.gpio0.into_function(), pins.gpio1.into_function());
     // Need to perform clock init before using UART or it will freeze.
-    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+    let mut uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
         .enable(
             UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
             clocks.peripheral_clock.freq(),
         )
         .unwrap();
-
-    uart.write_full_blocking(b"app-blinky stated...\r\n");
+    uart.write_full_blocking(b"app-blinky started...\r\n");
 
     #[cfg(debug_assertions)]
-    uart.write_full_blocking(b"app-blinky debug build\r\n");
+    writeln!(&mut uart, "app-blinky debug build\r").unwrap();
 
     #[cfg(not(debug_assertions))]
-    uart.write_full_blocking(b"app-blinky release build\r\n");
+    writeln!(&mut uart, "app-blinky release build\r").unwrap();
 
     // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
     // on-board LED, it might need to be changed.
@@ -96,10 +94,10 @@ fn main() -> ! {
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     loop {
-        uart.write_full_blocking(b"app-blinky on!\r\n");
+        writeln!(uart, "app-blinky on!\r").unwrap();
         led_pin.set_high().unwrap();
         delay.delay_ms(500);
-        uart.write_full_blocking(b"app-blinky off!\r\n");
+        writeln!(uart, "app-blinky off!\r").unwrap();
         led_pin.set_low().unwrap();
         delay.delay_ms(500);
     }
