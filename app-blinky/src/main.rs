@@ -7,7 +7,8 @@
 use blxlib::image_header;
 use core::fmt::Write;
 use cortex_m_rt::entry;
-use defmt_rtt; // used by panic-probe
+use defmt::*;
+use defmt_rtt as _; // used by panic-probe
 use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
 
@@ -41,6 +42,7 @@ pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
 
 #[entry]
 fn main() -> ! {
+    info!("app-blinky: defmt-rtt");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);

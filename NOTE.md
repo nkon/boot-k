@@ -1517,7 +1517,9 @@ probe-rs reset --chip RP2040 --protocol swd
 
 ### シリアル出力をフォーマットする
 
-どのみち `app-blinky`では defmt-rttの出力が見えなくなっているので、シリアル出力をフォーマットできるようにする。
+`app-blinky`で`cargo run`すると、`bootloader`でのイメージヘッダ・バリデーションに失敗するようになる。そうなると、`app-blinky`では`defmt-rtt`の出力を見ることができない。
+
+せっかくなので、シリアル出力をフォーマットできるようにする。
 
 `core::fmt::Write`をインポートする。
 
@@ -1546,6 +1548,9 @@ probe-rs reset --chip RP2040 --protocol swd
 -    uart.write_full_blocking(b"app-blinky debug build\r\n");
 +    writeln!(&mut uart, "app-blinky debug build\r").unwrap();
 ```
+
+* `defmt-serial`というクレートもあったが、Uartの型が合わなくて、うまく使えなかった。
+* `bootloader`でのイメージヘッダ・バリデーションが失敗しても、無理やり`app-blinky`を起動するようにすれば、`cd app-blinky && cargo run`で`defmt-rtt`の出力を見ることができる。
 
 # QSPI フラッシュメモリの操作
 

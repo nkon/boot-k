@@ -43,19 +43,19 @@ fn ih_print(ih: &ImageHeader) {
     info!("crc32: {:04x}", ih.crc32);
 }
 
-fn ih_validate(ih: &ImageHeader) {
+fn ih_validate(ih: &ImageHeader) ->bool{
     // validate header
     if !ih.is_correct_magic() {
         error!("header=magic is not correct: {:04x}", ih.header_magic);
-        halt();
+        return false;
     }
     if ih.header_length != image_header::HEADER_LENGTH {
         error!("header_length is not correct: {:04x}", ih.header_length);
-        halt();
+        return false;
     }
     if !ih.is_correct_crc() {
         error!("crc32 is not correct: {:04x}", ih.crc32);
-        halt();
+        return false;
     }
     let slice = core::ptr::slice_from_raw_parts(
         (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
@@ -64,8 +64,9 @@ fn ih_validate(ih: &ImageHeader) {
     let payload_crc = crc32::crc32(unsafe { &*slice });
     if ih.payload_crc != payload_crc {
         error!("payload_crc is not correct: {:04x}", ih.payload_crc);
-        halt();
+        return false;
     }
+    true
 }
 
 fn halt() -> ! {
@@ -132,7 +133,10 @@ fn main() -> ! {
 
     let ih = image_header::load_from_addr(0x1002_0000);
     ih_print(&ih);
-    ih_validate(&ih);
+    if ih_validate(&ih) == false {
+        uart.write_full_blocking(b"bootloader: image validation fail\r\n");
+        // halt();
+    }
 
     uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
     uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
