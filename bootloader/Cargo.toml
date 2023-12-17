@@ -4,7 +4,7 @@ name = "bootloader"
 version = "0.1.0"
 
 [dependencies]
-cortex-m = "0.7"
+cortex-m = { version = "0.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
 

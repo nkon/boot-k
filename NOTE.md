@@ -44,8 +44,18 @@
   - [署名ツール](#署名ツール)
     - [パッケージのバージョンを得る方法](#パッケージのバージョンを得る方法)
     - [イメージの作成と書き込み](#イメージの作成と書き込み)
+    - [TODO: シェルスクリプトではなく、build.rs を使う](#todo-シェルスクリプトではなくbuildrs-を使う)
     - [bootloaderでバリデーションする](#bootloaderでバリデーションする)
     - [シリアル出力をフォーマットする](#シリアル出力をフォーマットする)
+- [SRAMからの起動](#sramからの起動)
+  - [BOOT\_LOADER\_RAM\_MEMCPY](#boot_loader_ram_memcpy)
+    - [memcpy44](#memcpy44)
+    - [システムレジスタを読む](#システムレジスタを読む)
+    - [リロケータブル・コード](#リロケータブルコード)
+    - [メモリマップ](#メモリマップ-1)
+    - [アドレス調整](#アドレス調整)
+    - [XIP Enable](#xip-enable)
+    - [最適化](#最適化)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
 
 
@@ -1473,6 +1483,8 @@ probe-rs download --chip RP2040 --protocol swd \
 probe-rs reset --chip RP2040 --protocol swd
 ```
 
+### TODO: シェルスクリプトではなく、build.rs を使う
+
 ### bootloaderでバリデーションする
 
 ```bootloader/src/main.rs
@@ -1551,6 +1563,211 @@ probe-rs reset --chip RP2040 --protocol swd
 
 * `defmt-serial`というクレートもあったが、Uartの型が合わなくて、うまく使えなかった。
 * `bootloader`でのイメージヘッダ・バリデーションが失敗しても、無理やり`app-blinky`を起動するようにすれば、`cd app-blinky && cargo run`で`defmt-rtt`の出力を見ることができる。
+
+# SRAMからの起動
+
+`app-blinky`をバージョンアップするという操作をを考える。
+
+ここまで、`app-blinky`は外部QSPIメモリ上に格納されて、XIPで実行されていた。XIPモードの時、外部QSPIメモリの内容は、READ-ONLY でメモリアドレス上に 0x1000_0000..0x2000_0000 まで(終わりは容量次第)のアドレスにマップされる。
+
+ここで X..Y はRustの範囲記法で、XからY、ただしXは含みYは含まない(Yの一つ手前まで)、という意味である。
+
+`app-blinky`の内容は、メモリアドレスを読めば読み込むことができるが、書き込むことはできない。`app-blinky`の内容を書き換えるためには、XIPを無効にする必要がある。
+
+その場合、コード自体はXIP領域(0x1000_0000..) に置くことはできない。
+
+コードをSRAM領域(0x2000_0000..)にコピーして、SRAM上でコードを実行する必要がある。
+
+## BOOT_LOADER_RAM_MEMCPY
+
+`rp2040-boot2`は、これまで使ってきた`BOOT_LOADER_W25Q080`(外付けのW25Qxxxxをマップして、そこからユーザコードを起動する)だけでなく、`BOOT_LOADER_RAM_MEMCPY`というものも提供している。
+
+`BOOT_LOADER_RAM_MEMCPY`は、次の動作を行う。loader(ロードするもの)に対して、loadee(ロードされるもの)という単語を使っている。あまり一般的ではないようだ。
+
+* Enable XIP
+* memcpy(SRAM_BASE, XIP_BASE+0x100, SRAM_END-SRAM_BASE)
+* Disable XIP
+* Jump to loadee(on SRAM_BASE)
+
+このようにすれば、起動されたコードはQSPIフラッシュメモリに書き込むことができる。ただし、メモリにマップされていないので、SSIにQSPIメモリのコマンドを発行させて、自前で書き込みトランザクションを実行しなければならない。
+
+### memcpy44
+
+RP2040は内蔵ROMにサービスルーチン(Datasheet 2.8.3 Bootrom Contents)が搭載されていて、ユーザプログラムから呼ぶことができる。`memcpy44`もその一つ。
+
+* loadeeはSRAM_BASE から実行されるように書く。
+
+### システムレジスタを読む
+
+こういったことをするのに、スタックポインタ(`MSP`)、プログラムカウンタ(`PC`)の値が重要になる。`cortex-m`クレートが便利機能を提供してくれているので、それを使えば簡単だ。ただし、PCを読むには、`cortex-m`の`inline-asm`フィーチャーを有効にしておかなければならない。
+
+```Cargo.toml
+[dependencies]
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+```
+
+```main.rs
+    info!("MSP={:08x}", cortex_m::register::msp::read());
+    info!("PC={:08x}", cortex_m::register::pc::read());
+```
+
+現時点での bootloader を実行すると次のように表示される。正しくPCがQSPIがマップされた領域(0x1000_0000..)を指していることがわかる。SPはSRAM領域(0x2000_0000..)に居る。
+
+```
+❯ cargo run  
+    Finished dev [optimized + debuginfo] target(s) in 0.03s
+     Running `probe-rs run --chip RP2040 --protocol swd /.../boot-k/target/thumbv6m-none-eabi/debug/bootloader`
+     Erasing sectors ✔ [00:00:00] [] 20.00 KiB/20.00 KiB @ 59.62 KiB/s (eta 0s )
+ Programming pages   ✔ [00:00:00] [] 20.00 KiB/20.00 KiB @ 29.35 KiB/s (eta 0s )    Finished in 1.049s
+INFO  MSP=2003fa60
+└─ bootloader::__cortex_m_rt_main @ src/main.rs:80  
+INFO  PC=10000270
+└─ bootloader::__cortex_m_rt_main @ src/main.rs:81  
+```
+
+### リロケータブル・コード
+
+どのアドレスにコピーしても動作するコード(マシン語)をPosition Independent Code(リロケータブル・コード)という。GCCの場合は`-fPIC`をつければそのようなコードが生成される。Rustの場合は、`.cargo/config.toml`の`[rustflats]`に`"-C", "relocation-model=pic"`と書けば良い。
+
+ただし、実際に試してみると、ビルドエラーになる。原因は`cortex-m-rt`がPICに対応していない。
+
+`cortex-m-rt`の`link.x`で`.got`セクションを定義しており(https://github.com/rust-embedded/cortex-m-rt/blob/master/link.x.in#L176)、`.got`セクションがあるとリンクエラーとなる(https://github.com/rust-embedded/cortex-m-rt/blob/master/link.x.in#L242)。
+
+実際に調べてみたところ、関連クレートには`.got`を使っているものはいないみたいだ。
+
+というわけで、`cortex-m-rt`を使わずにリロケータブル・コードを書くか、最初からRAMにコピーされる前提で位置固定のコードを書くか、ということになる。
+
+
+### メモリマップ
+
+`BOOT_LOADER_RAM_MEMCPY`を使う場合、XIP_BASE(QSPIフラッシュの先頭=0x1000_0000)から boot2 の分(0x100)だけオフセットしたアドレスから、loadee が格納されていることが期待されている。それを、SRAM_BASE=0x2000_0000からSRAM_END=0x20040000(256KB0)だけコピーして、`SRAM_BASE`に実行を移す。それが`BOOT_LOADER_RAM_MEMCPY`のやっていること。
+
+次のようにメモリマップを定義すると、boot2は、QSPIの先頭領域(0x2000_0000..0x2000_0100)に割り当てられ、**コード領域はSRAM(0x2000_0000..)に割り当てられる**。スタックやヒープなどはSRAMの後半(0x1000_4000..)に割り当てられる。コンパイラも、0x1000_0000..のアドレスで実行されるようなコードを生成する。
+
+```bootloader/memory.x
+MEMORY {
+    BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
+    FLASH : ORIGIN = 0x20000000, LENGTH = 0x4000
+    RAM   : ORIGIN = 0x20004000, LENGTH = 8K
+
+}
+
+EXTERN(BOOT2_FIRMWARE)
+
+SECTIONS {
+    /* ### Boot loader */
+    .boot2 ORIGIN(BOOT2) :
+    {
+        KEEP(*(.boot2));
+    } > BOOT2
+} INSERT BEFORE .text;
+```
+
+### アドレス調整
+
+しかし、実際には、BOOT2は0x1000_0000..0x1000_0100に書き込まれ、**コード領域は0x1000_0100..に書き込まれなければならない**。0x1000_0100..に書き込まれたコードはBOOT2によって0x2000_0000..にコピーされ、そこで実行される。
+
+`objcopy`を使って、セクションごとに切り出して、書き込み用のバイナリを作る。フラッシュの消去セクタにアラインしなければならないので、boot2とloadeeを別々に書き込むのではなく、結合して一気に書き込む必要がある。
+
+```bootloader/write_image.sh
+## .boot2セクションだけ切り出す。ELF内では.bootは0x1000_0000..0x1000_0100に割り当てられている。
+arm-none-eabi-objcopy --only-section=".boot2" -O binary target/${arch}/${debug}/bootloader target/${arch}/${debug}/boot2.bin
+
+## 残りのセクションを切り出す。ELF内ではコード類は0x2000_0100..に割り当てられている。
+arm-none-eabi-objcopy --only-section=".vector_table" --only-section=".text" --only-section=".rodata" --only-section=".data" -O binary target/${arch}/${debug}/bootloader target/${arch}/${debug}/bootloader.bin
+
+## それらのバイナリを結合摺る
+cat target/${arch}/${debug}/bootloader.bin >> target/${arch}/${debug}/boot2.bin
+
+## 結合したバイナリを0x1000_0000から書き込む。コード類はBOOT2によって0x1000_0000.. にコピーされて実行される。
+probe-rs download --chip RP2040 --protocol swd --format bin --base-address 0x10000000 --skip 0 target/${arch}/${debug}/boot2.bin
+probe-rs reset --chip RP2040 --protocol swd
+```
+
+ややこしいので整理。
+
+コンパイラの出力
+* 0x1000_0000..0x1000_0100 : boot2(`BOOT_LOADER_RAM_MEMCPY`)
+* 0x2000_0000..            : bootloader
+
+objdumpで切り出す
+* 0x1000_0000..0x1000_0100 : > boot2.bin
+* 0x2000_0000..            : > bootloader.bin
+
+結合する。binファイルは先頭からのオフセットのみで、アドレスを持たない
+* 0x0000..0x0100 : < boot2.bin
+* 0x0100..       : < bootloader.bin
+
+書き込まれるアドレス(`--base-address=0x1000_0000`)
+* 0x1000_0000..0x1000_0100 : < boot2
+* 0x1000_0100..            : < bootloader
+
+boot2がSRAMにコピー(コンパイラの出力が再現されている)
+* 0x1000_0000..0x1000_0100 : < boot2
+* 0x2000_0000..            : < bootloader
+
+
+### XIP Enable
+
+`bootloader`はSRAMにコピーされて、XIP Disableの状態で実行される。しかし、`app-blinky`はQSPI上にあるので、XIP Enableに変更してから、`app-blinky`に実行を移さなければならない。
+
+`BOOT_LOADER_RAM_MEMCPY`のコード(gccのアセンブラで書かれている)から、該当する箇所をRustのインライン・アセンブラで書く。
+
+```bootloader/main.rs
+    // ldr r3, =XIP_SSI_BASE                   ; XIP_SSI_BASE             0x18000000
+
+    // // Disable SSI to allow further config
+    // mov r1, #0
+    // str r1, [r3, #SSI_SSIENR_OFFSET]        ; SSI_SSIENR_OFFSET        0x00000008
+
+    // // Set baud rate
+    // mov r1, #PICO_FLASH_SPI_CLKDIV          ; PICO_FLASH_SPI_CLKDIV    4
+    // str r1, [r3, #SSI_BAUDR_OFFSET]         ; SSI_BAUDR_OFFSET         0x00000014
+
+    // ldr r1, =(CTRLR0_XIP)      ; CTRLR0_XIP  (0x0 << 21) | (31  << 16) | (0x3 << 8)
+    // 0b0000_0000_0001_1111_0000_0011_0000_0000 = 0x001f0300
+    // str r1, [r3, #SSI_CTRLR0_OFFSET]        ; SSI_CTRLR0_OFFSET        0x00000000
+
+    // ldr r1, =(SPI_CTRLR0_XIP)  ; SPI_CTRLR0_XIP  (CMD_READ << 24) | (2 << 8) | (ADDR_L << 2) | (0x0 << 0)
+    // 0b0000_0011_0000_0000_0000_0010_0001_1000 = 0x03000218
+
+    // ldr r0, =(XIP_SSI_BASE + SSI_SPI_CTRLR0_OFFSET); SSI_SPI_CTRLR0_OFFSET    0x000000f4
+    // str r1, [r0]
+
+    // // NDF=0 (single 32b read)
+    // mov r1, #0x0
+    // str r1, [r3, #SSI_CTRLR1_OFFSET]        ; SSI_CTRLR1_OFFSET        0x00000004
+
+    // // Re-enable SSI
+    // mov r1, #1
+    // str r1, [r3, #SSI_SSIENR_OFFSET]
+
+    unsafe {
+        asm!(
+            "ldr r3, =0x18000000",
+            "movs r1, #0",
+            "str r1, [r3, #0x00000008]",
+            "movs r1, #4",
+            "str r1, [r3, #0x00000014]",
+            "ldr r1, =0x001f0300",
+            "str r1, [r3, #0x00000000]",
+            "ldr r1, =0x03000218",
+            "ldr r0, =0x180000f4",
+            "str r1, [r0]",
+            "movs r1, #0x0",
+            "str r1, [r3, #0x00000004]",
+            "movs r1, #1",
+            "str r1, [r3, #0x00000008]",
+        );
+    };
+
+```
+
+### 最適化
+
+Debugビルドの場合、大きすぎて SRAMの256KBに入り切らなかったので、bootloaderはReleaseビルドを常に使うことにする。
+
+
 
 # QSPI フラッシュメモリの操作
 

@@ -6,7 +6,7 @@
             "preLaunchTask": "rust: cargo build",
             "type": "probe-rs-debug",
             "request": "launch",
-            "name": "bootloader",
+            "name": "bootloader - probe-rs",
             "cwd": "${workspaceFolder}",
             "chip": "rp2040",
             // RP2040 doesn't support connectUnderReset

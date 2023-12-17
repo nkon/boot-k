@@ -25,7 +25,7 @@ use rp2040_hal::{
 #[link_section = ".image_header"]
 #[used]
 pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
-    header_magic: 0xb00410ad,
+    header_magic: image_header::IMAGE_HEADER_MAGIC,
     header_length: image_header::HEADER_LENGTH,
     hv_major: image_header::HV_MAJOR,
     hv_minor: image_header::HV_MINOR,

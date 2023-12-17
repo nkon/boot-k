@@ -5,6 +5,7 @@
 #![no_main]
 
 use core::arch::asm;
+use core::fmt::Write;
 use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _;
@@ -27,8 +28,8 @@ use rp2040_hal::{
 
 #[link_section = ".boot2"]
 #[used]
-pub static BOOT_LOADER: [u8; image_header::HEADER_LENGTH as usize] =
-    rp2040_boot2::BOOT_LOADER_W25Q080;
+pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_RAM_MEMCPY;
+// pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 fn ih_print(ih: &ImageHeader) {
     info!("header_magic: {:04x}", ih.header_magic);
@@ -43,7 +44,7 @@ fn ih_print(ih: &ImageHeader) {
     info!("crc32: {:04x}", ih.crc32);
 }
 
-fn ih_validate(ih: &ImageHeader) ->bool{
+fn ih_validate(ih: &ImageHeader) -> bool {
     // validate header
     if !ih.is_correct_magic() {
         error!("header=magic is not correct: {:04x}", ih.header_magic);
@@ -77,6 +78,8 @@ fn halt() -> ! {
 
 #[entry]
 fn main() -> ! {
+    info!("MSP={:08x}", cortex_m::register::msp::read());
+    info!("PC={:08x}", cortex_m::register::pc::read());
     info!("Program start");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
@@ -109,13 +112,15 @@ fn main() -> ! {
     // Set up UART on GP0 and GP1 (Pico pins 1 and 2)
     let uart_pins = (pins.gpio0.into_function(), pins.gpio1.into_function());
     // Need to perform clock init before using UART or it will freeze.
-    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+    let mut uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
         .enable(
             UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
             clocks.peripheral_clock.freq(),
         )
         .unwrap();
 
+    writeln!(uart, "MSP={:08x}\r", cortex_m::register::msp::read()).unwrap();
+    writeln!(uart, "PC={:08x}\r", cortex_m::register::pc::read()).unwrap();
     uart.write_full_blocking(b"bootloader stated...\r\n");
 
     #[cfg(debug_assertions)]
@@ -133,8 +138,8 @@ fn main() -> ! {
 
     let ih = image_header::load_from_addr(0x1002_0000);
     ih_print(&ih);
-    if ih_validate(&ih) == false {
-        uart.write_full_blocking(b"bootloader: image validation fail\r\n");
+    if !ih_validate(&ih) {
+        uart.write_full_blocking(b"bootloader: FAIL: IMAGE VALIDATION ***\r\n");
         // halt();
     }
 
@@ -142,6 +147,53 @@ fn main() -> ! {
     uart.write_full_blocking(b"bootloader: boot application!!!\r\n");
 
     delay.delay_ms(500);
+
+    // ldr r3, =XIP_SSI_BASE                   ; XIP_SSI_BASE             0x18000000
+
+    // // Disable SSI to allow further config
+    // mov r1, #0
+    // str r1, [r3, #SSI_SSIENR_OFFSET]        ; SSI_SSIENR_OFFSET        0x00000008
+
+    // // Set baud rate
+    // mov r1, #PICO_FLASH_SPI_CLKDIV          ; PICO_FLASH_SPI_CLKDIV    4
+    // str r1, [r3, #SSI_BAUDR_OFFSET]         ; SSI_BAUDR_OFFSET         0x00000014
+
+    // ldr r1, =(CTRLR0_XIP)      ; CTRLR0_XIP  (0x0 << 21) | (31  << 16) | (0x3 << 8)
+    // 0b0000_0000_0001_1111_0000_0011_0000_0000 = 0x001f0300
+    // str r1, [r3, #SSI_CTRLR0_OFFSET]        ; SSI_CTRLR0_OFFSET        0x00000000
+
+    // ldr r1, =(SPI_CTRLR0_XIP)  ; SPI_CTRLR0_XIP  (CMD_READ << 24) | (2 << 8) | (ADDR_L << 2) | (0x0 << 0)
+    // 0b0000_0011_0000_0000_0000_0010_0001_1000 = 0x03000218
+
+    // ldr r0, =(XIP_SSI_BASE + SSI_SPI_CTRLR0_OFFSET); SSI_SPI_CTRLR0_OFFSET    0x000000f4
+    // str r1, [r0]
+
+    // // NDF=0 (single 32b read)
+    // mov r1, #0x0
+    // str r1, [r3, #SSI_CTRLR1_OFFSET]        ; SSI_CTRLR1_OFFSET        0x00000004
+
+    // // Re-enable SSI
+    // mov r1, #1
+    // str r1, [r3, #SSI_SSIENR_OFFSET]
+
+    unsafe {
+        asm!(
+            "ldr r3, =0x18000000",
+            "movs r1, #0",
+            "str r1, [r3, #0x00000008]",
+            "movs r1, #4",
+            "str r1, [r3, #0x00000014]",
+            "ldr r1, =0x001f0300",
+            "str r1, [r3, #0x00000000]",
+            "ldr r1, =0x03000218",
+            "ldr r0, =0x180000f4",
+            "str r1, [r0]",
+            "movs r1, #0x0",
+            "str r1, [r3, #0x00000004]",
+            "movs r1, #1",
+            "str r1, [r3, #0x00000008]",
+        );
+    };
 
     // exec => 0x10020100
     // stack pointer => VTOR[0] (VTOR=0xe000ed08)

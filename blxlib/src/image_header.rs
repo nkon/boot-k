@@ -4,6 +4,7 @@ use core::ptr;
 pub const HEADER_LENGTH: u16 = 256;
 pub const HV_MAJOR: u8 = 0;
 pub const HV_MINOR: u8 = 1;
+pub const IMAGE_HEADER_MAGIC: u32 = 0xb00410ad;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -51,7 +52,7 @@ impl Default for ImageHeader {
 impl ImageHeader {
     pub fn new() -> Self {
         ImageHeader {
-            header_magic: 0xb00410ad,
+            header_magic: IMAGE_HEADER_MAGIC,
             header_length: HEADER_LENGTH,
             hv_major: HV_MAJOR,
             hv_minor: HV_MINOR,
@@ -67,7 +68,7 @@ impl ImageHeader {
         }
     }
     pub fn is_correct_magic(&self) -> bool {
-        self.header_magic == 0xb00410ad
+        self.header_magic == IMAGE_HEADER_MAGIC
     }
     pub fn set_crc32(&mut self) {
         let buf = as_bytes_with_len(self, HEADER_LENGTH as usize - 4);
