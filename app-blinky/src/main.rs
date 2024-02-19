@@ -80,7 +80,11 @@ fn main() -> ! {
             clocks.peripheral_clock.freq(),
         )
         .unwrap();
-    uart.write_full_blocking(b"app-blinky started...\r\n");
+
+    writeln!(uart, "MSP={:08x}\r", cortex_m::register::msp::read()).unwrap();
+    writeln!(uart, "PC={:08x}\r", cortex_m::register::pc::read()).unwrap();
+
+    uart.write_full_blocking(b"app-blinky started...AAA\r\n");
 
     #[cfg(debug_assertions)]
     writeln!(&mut uart, "app-blinky debug build\r").unwrap();

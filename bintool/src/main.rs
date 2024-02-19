@@ -147,7 +147,7 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
 }
 
 fn run_all(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Box<dyn Error>> {
-    println!("\n*** run_version ***\n");
+    println!("\n*** run_all ***\n");
     let mut in_file = File::open(in_file_path)?;
     let mut in_buf = Vec::<u8>::new();
     let _ = in_file.read_to_end(&mut in_buf)?;

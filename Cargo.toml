@@ -21,7 +21,9 @@ codegen-units = 1
 debug = 2
 debug-assertions = true
 incremental = false
-opt-level = 3
+lto = 'fat'
+# opt-level = 3
+opt-level = "z"  # Optimize for size.
 overflow-checks = true
 
 # cargo build/run --release
@@ -31,7 +33,8 @@ debug = 2
 debug-assertions = false
 incremental = false
 lto = 'fat'
-opt-level = 3
+# opt-level = 3
+opt-level = "z"  # Optimize for size.
 overflow-checks = false
 
 # do not optimize proc-macro crates = faster builds from scratch
@@ -39,7 +42,8 @@ overflow-checks = false
 codegen-units = 8
 debug = false
 debug-assertions = false
-opt-level = 0
+# opt-level = 0
+opt-level = "z"  # Optimize for size.
 overflow-checks = false
 
 [profile.release.build-override]

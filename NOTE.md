@@ -24,6 +24,7 @@
   - [`rp-pico`というBSPへの依存をなくす](#rp-picoというbspへの依存をなくす)
   - [メモリマップを設計どおりに修正する](#メモリマップを設計どおりに修正する)
   - [UARTを使えるようにしておく](#uartを使えるようにしておく)
+    - [uartを引数で渡す](#uartを引数で渡す)
 - [`bootloader`をもとに`app-blinky`を作る](#bootloaderをもとにapp-blinkyを作る)
   - [cargo-binutils](#cargo-binutils)
 - [bootloaderから app-blinkyに制御を移す。](#bootloaderから-app-blinkyに制御を移す)
@@ -48,7 +49,7 @@
     - [bootloaderでバリデーションする](#bootloaderでバリデーションする)
     - [シリアル出力をフォーマットする](#シリアル出力をフォーマットする)
 - [SRAMからの起動](#sramからの起動)
-  - [BOOT\_LOADER\_RAM\_MEMCPY](#boot_loader_ram_memcpy)
+  - [`BOOT_LOADER_RAM_MEMCPY`](#boot_loader_ram_memcpy)
     - [memcpy44](#memcpy44)
     - [システムレジスタを読む](#システムレジスタを読む)
     - [リロケータブル・コード](#リロケータブルコード)
@@ -56,7 +57,10 @@
     - [アドレス調整](#アドレス調整)
     - [XIP Enable](#xip-enable)
     - [最適化](#最適化)
+    - [TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する](#todo-sram実行するとapp-blinkyイメージのバリデーションに失敗する)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
+    - [Install OpenOCD](#install-openocd)
+    - [OpenOCD + GDB でデバッグ](#openocd--gdb-でデバッグ)
 
 
 # ワークスペースの作成
@@ -278,7 +282,7 @@ boot2の行わなければならないことは次のとおり。
 |0x1000_0000|2048K(0x20_0000)| QSPI Flash(XIP)               |           |             |     |0x1000_0000|XIP_BASE                 |
 |           |                |                               |           |             |     |0x1100_0000|XIP_NOALLOC_BASE         |
 |           |                |                               |           |             |     |0x1200_0000|XIP_NOCACHE_BASE         |
-|           |                |                               |           |             |     |0x1300_0000|XIP_NOCACHE_NOALLOCB_BASE|
+|           |                |                               |           |             |     |0x1300_0000|XIP_NOCACHE_NOALLOC_BASE|
 |           |                |                               |           |             |     |0x1400_0000|XIP_CTRL_BASE            |
 |           |                |                               |           |             |     |0x1500_0000|XIP_SRAM_BASE            |
 |           |                |                               |           |             |     |0x1500_0400|XIP_SRAM_END             |
@@ -501,13 +505,13 @@ rustflags = [
 |           |                |                               |swap         |             |0x101e_0000|0x2_0000(128KB)|                         |
 |           |                |                               |             |             |0x1020_0000|               |QSPI_END                 |
 |           |                |                               |             |             |           |               |                         |
-|0x2000_0000| 256K( 0x4_0000)| SRAM                          |             |0x2000_000000|0x2000_0000|0x1_0000(64KB) |SRAM_BASE                |
-|           |                |                               |             |0x2001_000000|0x2001_0000|0x1_0000(64KB) |SRAM1_BASE               |
-|           |                |                               |             |0x2002_000000|0x2002_0000|0x1_0000(64KB) |SRAM2_BASE               |
-|           |                |                               |             |0x2003_000000|0x2003_0000|0x1_0000(64KB) |SRAM3_BASE               |
+|0x2000_0000| 256K( 0x4_0000)| SRAM                          |             |0x2000_0000  |0x2000_0000|0x1_0000(64KB) |SRAM_BASE                |
+|           |                |                               |             |0x2001_0000  |0x2001_0000|0x1_0000(64KB) |SRAM1_BASE               |
+|           |                |                               |             |0x2002_0000  |0x2002_0000|0x1_0000(64KB) |SRAM2_BASE               |
+|           |                |                               |             |0x2003_0000  |0x2003_0000|0x1_0000(64KB) |SRAM3_BASE               |
 |           |                |                               |             |             |0x2004_0000|               |SRAM_STRIPED_END         |
-|           |                |                               |             |0x2004_000000|0x2004_0000|  0x1000( 4KB) |SRAM4_BASE               |
-|           |                |                               |             |0x2004_100000|0x2004_1000|  0x1000( 4KB) |SRAM5_BASE               |
+|           |                |                               |             |0x2004_0000  |0x2004_0000|  0x1000( 4KB) |SRAM4_BASE               |
+|           |                |                               |             |0x2004_1000  |0x2004_1000|  0x1000( 4KB) |SRAM5_BASE               |
 |           |                |                               |             |             |0x2004_2000|               |SRAM_END                 |
 |           |                |                               |             |             |           |               |                         |
 |0x4000_0000|                | APB Peripherals               |             |             |0x4000_0000|               |                         |
@@ -675,6 +679,45 @@ bootloader on!
 ~.
 
 Disconnected.
+```
+
+### uartを引数で渡す
+
+関数を呼び出した場合、その呼んだ先でUART出力を行いたい。そのようなときは、上記のように作成した`uart`オブジェクトも引数として関数に渡さなければならない。初期化時は型が自動で推定されるが、引数として渡すときは適切に定義する必要がある。
+
+このような型付け、境界条件付けは初心者には難しい。コンパイラのエラーを丁寧に読み解いていく必要がある。rust-analyzerが自動でやってくれるとよいのだが。
+
+呼ぶ側
+
+```rust
+    let mut uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+        .enable(
+            UartConfig::new(115200.Hz(), DataBits::Eight, None, StopBits::One),
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
+
+    ih_print(&ih, &mut uart);
+```
+
+関数定義
+
+* 引数の型は、`&mut UartPeripheral`。`UartPeripheral`は`<S, D, P>`の型パラメータを取る(generic)。
+* 引数がジェネリックなので、関数もジェネリックになり、型パラメータと、実際の型を指定する。
+* `writeln!()`を使うために、`UartPeripheral`に `Write`トレイト境界を付ける。
+
+```rust
+fn ih_print<
+    S: rp2040_hal::uart::State,
+    D: rp2040_hal::uart::UartDevice,
+    P: rp2040_hal::uart::ValidUartPinout<D>,
+>(
+    ih: &ImageHeader,
+    uart: &mut UartPeripheral<S, D, P>
+)
+where UartPeripheral<S, D, P>: Write{
+    writeln!(uart, "header_magic: {:04x}\r", ih.header_magic).unwrap();
+}
 ```
 
 
@@ -1050,13 +1093,13 @@ path = "../bootloader"
 
 `app-blinky/src/main.rs`で次のようにライブラリを使うことができる。
 
-`header_magic`は中二病っぽく、リートコードを使って"bootload"っぽくしてみた。
+`header_magic`は中二病っぽく、Hexspeakを使って"bootload"っぽくしてみた。
 
 ```app-blinky/src/main.rs
 #[link_section = ".image_header"]
 #[used]
 pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
-    header_magic: 0xb00410ad,
+    header_magic: 0xb00710ad,
     header_length: 256,
     hv_major: 0,
     hv_minor: 1,
@@ -1132,7 +1175,7 @@ workspace: /Users/nkon/src/rust/boot-k/Cargo.toml
  Programming pages   ✔ [00:00:02] [] 64.00 KiB/64.00 KiB @ 30.22 KiB/s (eta 0s )    Finished in 3.137s
 INFO  Program start
 └─ bootloader::__cortex_m_rt_main @ src/main.rs:31  
-INFO  b00410ad 100 0 1          # magicなどの値が正常に読めている
+INFO  b00710ad 100 0 1          # magicなどの値が正常に読めている
 └─ bootloader::__cortex_m_rt_main @ src/main.rs:86  
 0
 ```
@@ -1578,11 +1621,13 @@ probe-rs reset --chip RP2040 --protocol swd
 
 コードをSRAM領域(0x2000_0000..)にコピーして、SRAM上でコードを実行する必要がある。
 
-## BOOT_LOADER_RAM_MEMCPY
+## `BOOT_LOADER_RAM_MEMCPY`
 
 `rp2040-boot2`は、これまで使ってきた`BOOT_LOADER_W25Q080`(外付けのW25Qxxxxをマップして、そこからユーザコードを起動する)だけでなく、`BOOT_LOADER_RAM_MEMCPY`というものも提供している。
 
-`BOOT_LOADER_RAM_MEMCPY`は、次の動作を行う。loader(ロードするもの)に対して、loadee(ロードされるもの)という単語を使っている。あまり一般的ではないようだ。
+`BOOT_LOADER_RAM_MEMCPY`は、次の動作を行う。
+
+loader(ロードするもの)に対して、loadee(ロードされるもの)という単語を使っている。あまり一般的ではないようだ。
 
 * Enable XIP
 * memcpy(SRAM_BASE, XIP_BASE+0x100, SRAM_END-SRAM_BASE)
@@ -1640,7 +1685,7 @@ INFO  PC=10000270
 
 ### メモリマップ
 
-`BOOT_LOADER_RAM_MEMCPY`を使う場合、XIP_BASE(QSPIフラッシュの先頭=0x1000_0000)から boot2 の分(0x100)だけオフセットしたアドレスから、loadee が格納されていることが期待されている。それを、SRAM_BASE=0x2000_0000からSRAM_END=0x20040000(256KB0)だけコピーして、`SRAM_BASE`に実行を移す。それが`BOOT_LOADER_RAM_MEMCPY`のやっていること。
+`BOOT_LOADER_RAM_MEMCPY`を使う場合、XIP_BASE(QSPIフラッシュの先頭=0x1000_0000)から boot2 の分(0x100)だけオフセットしたアドレスから、loadee が格納されていることが期待されている。それを、SRAM_BASE=0x2000_0000からSRAM_END=0x2004_0000(256KB)だけコピーして、`SRAM_BASE`に実行を移す。それが`BOOT_LOADER_RAM_MEMCPY`のやっていること。
 
 次のようにメモリマップを定義すると、boot2は、QSPIの先頭領域(0x2000_0000..0x2000_0100)に割り当てられ、**コード領域はSRAM(0x2000_0000..)に割り当てられる**。スタックやヒープなどはSRAMの後半(0x1000_4000..)に割り当てられる。コンパイラも、0x1000_0000..のアドレスで実行されるようなコードを生成する。
 
@@ -1674,9 +1719,9 @@ SECTIONS {
 arm-none-eabi-objcopy --only-section=".boot2" -O binary target/${arch}/${debug}/bootloader target/${arch}/${debug}/boot2.bin
 
 ## 残りのセクションを切り出す。ELF内ではコード類は0x2000_0100..に割り当てられている。
-arm-none-eabi-objcopy --only-section=".vector_table" --only-section=".text" --only-section=".rodata" --only-section=".data" -O binary target/${arch}/${debug}/bootloader target/${arch}/${debug}/bootloader.bin
+arm-none-eabi-objcopy --only-section=".vector_table" --only-section=".text" --only-section=".rodata" -O binary target/${arch}/${debug}/bootloader target/${arch}/${debug}/bootloader.bin
 
-## それらのバイナリを結合摺る
+## それらのバイナリを結合する
 cat target/${arch}/${debug}/bootloader.bin >> target/${arch}/${debug}/boot2.bin
 
 ## 結合したバイナリを0x1000_0000から書き込む。コード類はBOOT2によって0x1000_0000.. にコピーされて実行される。
@@ -1767,8 +1812,141 @@ boot2がSRAMにコピー(コンパイラの出力が再現されている)
 
 Debugビルドの場合、大きすぎて SRAMの256KBに入り切らなかったので、bootloaderはReleaseビルドを常に使うことにする。
 
+また、`Cargo.toml`に `opt-level="z"`というサイズ最適化オプショオンを使うことも有効だ。
+
+### TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する
 
 
 # QSPI フラッシュメモリの操作
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Install OpenOCD
+
+PicoProbe対応版のOpenOCDが必要。
+
+https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html
+
+に書かれているようにインストール。
+
+* 必要なツールを`homebrew`でインストール。
+* `rp2040-v0.12.0`ブランチを、サブモジュール込み(`depth=1`)でクローン。文書によってはブランチが違うかもしれないが、最新でそれっぽいものを。
+* ビルド＆インストール。`/usr/local/bin/openocd`にインストールされる。`homebrew`でインストールしたものはPicoProbe対応していない。
+
+```
+❯ /usr/local/bin/openocd --version
+Open On-Chip Debugger 0.12.0-g4d87f6d (2023-12-17-10:38)
+Licensed under GNU GPL v2
+For bug reports, read
+        http://openocd.org/doc/doxygen/bugs.html
+
+❯ openocd --version
+Open On-Chip Debugger 0.12.0
+Licensed under GNU GPL v2
+For bug reports, read
+        http://openocd.org/doc/doxygen/bugs.html
+```
+
+### OpenOCD + GDB でデバッグ
+
+* OpenOCDは `brew`でインストール。
+* デバッグアダプタは、汎用の`interface/cmsis-dap.cfg`を使えばPicoProbeを駆動することができる。
+* `adapter speed 5000`も追加。
+* ターゲットは`target/rp2040.cfg`を指定。
+
+
+```
+❯ sudo openocd -f interface/cmsis-dap.cfg -f target/rp2040.cfg -c "adapter speed 5000"
+Password:
+Open On-Chip Debugger 0.12.0
+Licensed under GNU GPL v2
+For bug reports, read
+        http://openocd.org/doc/doxygen/bugs.html
+adapter speed: 5000 kHz
+
+Info : Listening on port 6666 for tcl connections
+Info : Listening on port 4444 for telnet connections
+Info : Using CMSIS-DAPv2 interface with VID:PID=0x2e8a:0x000c, serial=E660D4A0A781212F
+Info : CMSIS-DAP: SWD supported
+Info : CMSIS-DAP: Atomic commands supported
+Info : CMSIS-DAP: Test domain timer supported
+Info : CMSIS-DAP: FW Version = 2.0.0
+Info : CMSIS-DAP: Interface Initialised (SWD)
+Info : SWCLK/TCK = 0 SWDIO/TMS = 0 TDI = 0 TDO = 0 nTRST = 0 nRESET = 0
+Info : CMSIS-DAP: Interface ready
+Info : clock speed 5000 kHz
+Info : SWD DPIDR 0x0bc12477, DLPIDR 0x00000001
+Info : SWD DPIDR 0x0bc12477, DLPIDR 0x10000001
+Info : [rp2040.core0] Cortex-M0+ r0p1 processor detected
+Info : [rp2040.core0] target has 4 breakpoints, 2 watchpoints
+Info : [rp2040.core1] Cortex-M0+ r0p1 processor detected
+Info : [rp2040.core1] target has 4 breakpoints, 2 watchpoints
+Info : starting gdb server for rp2040.core0 on 3333
+Info : Listening on port 3333 for gdb connections
+Info : starting gdb server for rp2040.core1 on 3334
+Info : Listening on port 3334 for gdb connections
+```
+
+gdbで接続する場合、ポート3333が core0, 3334が core1となる。
+
+```
+❯ arm-none-eabi-gdb ../target/thumbv6m-none-eabi/debug/bootloader
+GNU gdb (GDB) 14.1
+Copyright (C) 2023 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type "show copying" and "show warranty" for details.
+This GDB was configured as "--host=aarch64-apple-darwin22.6.0 --target=arm-none-eabi".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<https://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+    <http://www.gnu.org/software/gdb/documentation/>.
+
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from ../target/thumbv6m-none-eabi/debug/bootloader...
+(gdb) target remote localhost:3333
+Remote debugging using localhost:3333
+<signal handler called>
+(gdb) monitor reset init
+[rp2040.core0] halted due to debug-request, current mode: Thread
+xPSR: 0xf1000000 pc: 0x000000ee msp: 0x20041f00
+[rp2040.core1] halted due to debug-request, current mode: Thread
+xPSR: 0xf1000000 pc: 0x000000ee msp: 0x20041f00
+(gdb) disp $pc
+1: $pc = (void (*)()) 0xfffffffe
+(gdb) continue
+Continuing.
+[rp2040.core0] clearing lockup after double fault
+
+Program received signal SIGINT, Interrupt.
+<signal handler called>
+1: $pc = (void (*)()) 0xfffffffe
+(gdb)
+```
 

@@ -6,8 +6,9 @@
 
 use core::arch::asm;
 use core::fmt::Write;
+use core::ptr;
 use cortex_m_rt::entry;
-use defmt::*;
+// use defmt::*;
 use defmt_rtt as _;
 // use embedded_hal::digital::v2::OutputPin;
 use blxlib::{
@@ -28,34 +29,78 @@ use rp2040_hal::{
 
 #[link_section = ".boot2"]
 #[used]
-pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_RAM_MEMCPY;
-// pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
+// pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_RAM_MEMCPY;
+pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
-fn ih_print(ih: &ImageHeader) {
-    info!("header_magic: {:04x}", ih.header_magic);
-    info!("header_length: {}", ih.header_length);
-    info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
-    info!(
-        "iv: {}.{}.{}-{:08x}",
-        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    );
-    info!("image_length: {:04x}", ih.image_length);
-    info!("payload_crc: {:04x}", ih.payload_crc);
-    info!("crc32: {:04x}", ih.crc32);
+fn ih_print<
+    S: rp2040_hal::uart::State,
+    D: rp2040_hal::uart::UartDevice,
+    P: rp2040_hal::uart::ValidUartPinout<D>,
+>(
+    ih: &ImageHeader,
+    uart: &mut UartPeripheral<S, D, P>,
+) where
+    UartPeripheral<S, D, P>: Write,
+{
+    // info!("header_magic: {:08x}", ih.header_magic);
+    // info!("header_length: {}", ih.header_length);
+    // info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
+    // info!(
+    //     "iv: {}.{}.{}-{:08x}",
+    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    // );
+    // info!("image_length: {:08x}", ih.image_length);
+    // info!("payload_crc: {:08x}", ih.payload_crc);
+    // info!("crc32: {:08x}", ih.crc32);
+    writeln!(uart, "header_magic: {:08x}\r", ih.header_magic).unwrap();
+    // writeln!(uart, "header_length: {}\r", ih.header_length).unwrap();
+    // writeln!(uart, "hv: {}.{}\r", ih.hv_major, ih.hv_minor).unwrap();
+    // writeln!(
+    //     uart,
+    //     "iv: {}.{}.{}-{:08x}\r",
+    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    // )
+    // .unwrap();
+    // writeln!(uart, "image_length: {:08x}\r", ih.image_length).unwrap();
+    // writeln!(uart, "payload_crc: {:08x}\r", ih.payload_crc).unwrap();
+    // writeln!(uart, "crc32: {:08x}\r", ih.crc32).unwrap();
 }
 
-fn ih_validate(ih: &ImageHeader) -> bool {
+fn ih_validate<
+    S: rp2040_hal::uart::State,
+    D: rp2040_hal::uart::UartDevice,
+    P: rp2040_hal::uart::ValidUartPinout<D>,
+>(
+    ih: &ImageHeader,
+    uart: &mut UartPeripheral<S, D, P>,
+) -> bool
+where
+    UartPeripheral<S, D, P>: Write,
+{
     // validate header
     if !ih.is_correct_magic() {
-        error!("header=magic is not correct: {:04x}", ih.header_magic);
+        // error!("header_magic is not correct: {:08x}", ih.header_magic);
+        writeln!(
+            uart,
+            "header_magic is not correct: {:08x}\r",
+            ih.header_magic
+        )
+        .unwrap();
         return false;
     }
     if ih.header_length != image_header::HEADER_LENGTH {
-        error!("header_length is not correct: {:04x}", ih.header_length);
+        // error!("header_length is not correct: {:08x}", ih.header_length);
+        writeln!(
+            uart,
+            "header_length is not correct: {:08x}\r",
+            ih.header_length
+        )
+        .unwrap();
         return false;
     }
     if !ih.is_correct_crc() {
-        error!("crc32 is not correct: {:04x}", ih.crc32);
+        // error!("crc32 is not correct: {:08x}", ih.crc32);
+        writeln!(uart, "crc32 is not correct: {:08x}\r", ih.crc32).unwrap();
         return false;
     }
     let slice = core::ptr::slice_from_raw_parts(
@@ -64,7 +109,8 @@ fn ih_validate(ih: &ImageHeader) -> bool {
     );
     let payload_crc = crc32::crc32(unsafe { &*slice });
     if ih.payload_crc != payload_crc {
-        error!("payload_crc is not correct: {:04x}", ih.payload_crc);
+        // error!("payload_crc is not correct: {:08x}", ih.payload_crc);
+        writeln!(uart, "payload_crc is not correct: {:08x}\r", ih.payload_crc).unwrap();
         return false;
     }
     true
@@ -78,9 +124,9 @@ fn halt() -> ! {
 
 #[entry]
 fn main() -> ! {
-    info!("MSP={:08x}", cortex_m::register::msp::read());
-    info!("PC={:08x}", cortex_m::register::pc::read());
-    info!("Program start");
+    // info!("MSP={:08x}", cortex_m::register::msp::read());
+    // info!("PC={:08x}", cortex_m::register::pc::read());
+    // info!("Program start");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -121,7 +167,7 @@ fn main() -> ! {
 
     writeln!(uart, "MSP={:08x}\r", cortex_m::register::msp::read()).unwrap();
     writeln!(uart, "PC={:08x}\r", cortex_m::register::pc::read()).unwrap();
-    uart.write_full_blocking(b"bootloader stated...\r\n");
+    // uart.write_full_blocking(b"bootloader stated...\r\n");
 
     #[cfg(debug_assertions)]
     uart.write_full_blocking(b"bootloader debug build\r\n");
@@ -136,9 +182,46 @@ fn main() -> ! {
     // LED to one of the GPIO pins, and reference that pin here.
     let mut _led_pin = pins.gpio25.into_push_pull_output();
 
-    let ih = image_header::load_from_addr(0x1002_0000);
-    ih_print(&ih);
-    if !ih_validate(&ih) {
+    let pc = cortex_m::register::pc::read();
+    writeln!(uart, "PC={:08x}\r", pc).unwrap();
+
+    // let ih = image_header::load_from_addr(0x1002_0000);
+    let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
+    ih_print(&ih, &mut uart);
+    let mut ih_header: u32 = 0;
+
+    for offset in 0..0x100 {
+        let val = unsafe { ptr::read_volatile((0x1002_0000+offset) as *const u8) };
+        if offset % 16 == 0 {
+            write!(uart, "\r\n{:08x}-", 0x1002_0000+offset);
+        }
+        write!(uart, "{:02x} ", val);
+    }
+
+    unsafe {
+        asm!(
+            "ldr r3, =0x10020000",
+            "ldr r1, [r3]",
+            "movs {}, r1", out(reg) ih_header
+        );
+    };
+    writeln!(uart, "ih_header={:08x}\r", ih_header).unwrap();
+
+
+
+    // writeln!(uart, "header_magic: {:08x}", ih.header_magic).unwrap();
+    // writeln!(uart, "header_length: {}", ih.header_length).unwrap();
+    // writeln!(uart, "hv: {}.{}", ih.hv_major, ih.hv_minor).unwrap();
+    // writeln!(
+    //     uart,
+    //     "iv: {}.{}.{}-{:08x}",
+    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    // )
+    // .unwrap();
+    // writeln!(uart, "image_length: {:08x}", ih.image_length).unwrap();
+    // writeln!(uart,"payload_crc: {:08x}", ih.payload_crc).unwrap();
+    // writeln!(uart, "crc32: {:08x}", ih.crc32).unwrap();
+    if !ih_validate(&ih, &mut uart) {
         uart.write_full_blocking(b"bootloader: FAIL: IMAGE VALIDATION ***\r\n");
         // halt();
     }
@@ -176,24 +259,24 @@ fn main() -> ! {
     // mov r1, #1
     // str r1, [r3, #SSI_SSIENR_OFFSET]
 
-    unsafe {
-        asm!(
-            "ldr r3, =0x18000000",
-            "movs r1, #0",
-            "str r1, [r3, #0x00000008]",
-            "movs r1, #4",
-            "str r1, [r3, #0x00000014]",
-            "ldr r1, =0x001f0300",
-            "str r1, [r3, #0x00000000]",
-            "ldr r1, =0x03000218",
-            "ldr r0, =0x180000f4",
-            "str r1, [r0]",
-            "movs r1, #0x0",
-            "str r1, [r3, #0x00000004]",
-            "movs r1, #1",
-            "str r1, [r3, #0x00000008]",
-        );
-    };
+    // unsafe {
+    //     asm!(
+    //         "ldr r3, =0x18000000",
+    //         "movs r1, #0",
+    //         "str r1, [r3, #0x00000008]",
+    //         "movs r1, #4",
+    //         "str r1, [r3, #0x00000014]",
+    //         "ldr r1, =0x001f0300",
+    //         "str r1, [r3, #0x00000000]",
+    //         "ldr r1, =0x03000218",
+    //         "ldr r0, =0x180000f4",
+    //         "str r1, [r0]",
+    //         "movs r1, #0x0",
+    //         "str r1, [r3, #0x00000004]",
+    //         "movs r1, #1",
+    //         "str r1, [r3, #0x00000008]",
+    //     );
+    // };
 
     // exec => 0x10020100
     // stack pointer => VTOR[0] (VTOR=0xe000ed08)

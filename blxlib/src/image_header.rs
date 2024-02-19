@@ -4,7 +4,8 @@ use core::ptr;
 pub const HEADER_LENGTH: u16 = 256;
 pub const HV_MAJOR: u8 = 0;
 pub const HV_MINOR: u8 = 1;
-pub const IMAGE_HEADER_MAGIC: u32 = 0xb00410ad;
+pub const IMAGE_HEADER_MAGIC: u32 = 0xb00710ad;
+// pub const IMAGE_HEADER_MAGIC: u32 = 0xFFFFFFFF;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
