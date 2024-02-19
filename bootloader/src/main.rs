@@ -29,8 +29,8 @@ use rp2040_hal::{
 
 #[link_section = ".boot2"]
 #[used]
-// pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_RAM_MEMCPY;
-pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
+pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_RAM_MEMCPY;
+// pub static BOOT_LOADER: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 
 fn ih_print<
     S: rp2040_hal::uart::State,
@@ -122,8 +122,58 @@ fn halt() -> ! {
     }
 }
 
+fn xip_enable() {
+    // ldr r3, =XIP_SSI_BASE                   ; XIP_SSI_BASE             0x18000000
+
+    // // Disable SSI to allow further config
+    // mov r1, #0
+    // str r1, [r3, #SSI_SSIENR_OFFSET]        ; SSI_SSIENR_OFFSET        0x00000008
+
+    // // Set baud rate
+    // mov r1, #PICO_FLASH_SPI_CLKDIV          ; PICO_FLASH_SPI_CLKDIV    4
+    // str r1, [r3, #SSI_BAUDR_OFFSET]         ; SSI_BAUDR_OFFSET         0x00000014
+
+    // ldr r1, =(CTRLR0_XIP)      ; CTRLR0_XIP  (0x0 << 21) | (31  << 16) | (0x3 << 8)
+    // 0b0000_0000_0001_1111_0000_0011_0000_0000 = 0x001f0300
+    // str r1, [r3, #SSI_CTRLR0_OFFSET]        ; SSI_CTRLR0_OFFSET        0x00000000
+
+    // ldr r1, =(SPI_CTRLR0_XIP)  ; SPI_CTRLR0_XIP  (CMD_READ << 24) | (2 << 8) | (ADDR_L << 2) | (0x0 << 0)
+    // 0b0000_0011_0000_0000_0000_0010_0001_1000 = 0x03000218
+
+    // ldr r0, =(XIP_SSI_BASE + SSI_SPI_CTRLR0_OFFSET); SSI_SPI_CTRLR0_OFFSET    0x000000f4
+    // str r1, [r0]
+
+    // // NDF=0 (single 32b read)
+    // mov r1, #0x0
+    // str r1, [r3, #SSI_CTRLR1_OFFSET]        ; SSI_CTRLR1_OFFSET        0x00000004
+
+    // // Re-enable SSI
+    // mov r1, #1
+    // str r1, [r3, #SSI_SSIENR_OFFSET]
+
+    unsafe {
+        asm!(
+            "ldr r3, =0x18000000",
+            "movs r1, #0",
+            "str r1, [r3, #0x00000008]",
+            "movs r1, #4",
+            "str r1, [r3, #0x00000014]",
+            "ldr r1, =0x001f0300",
+            "str r1, [r3, #0x00000000]",
+            "ldr r1, =0x03000218",
+            "ldr r0, =0x180000f4",
+            "str r1, [r0]",
+            "movs r1, #0x0",
+            "str r1, [r3, #0x00000004]",
+            "movs r1, #1",
+            "str r1, [r3, #0x00000008]",
+        );
+    };
+}
+
 #[entry]
 fn main() -> ! {
+    // halt();
     // info!("MSP={:08x}", cortex_m::register::msp::read());
     // info!("PC={:08x}", cortex_m::register::pc::read());
     // info!("Program start");
@@ -184,19 +234,20 @@ fn main() -> ! {
 
     let pc = cortex_m::register::pc::read();
     writeln!(uart, "PC={:08x}\r", pc).unwrap();
-
-    // let ih = image_header::load_from_addr(0x1002_0000);
-    let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
+    
+    let ih = image_header::load_from_addr(0x1002_0000);
+    // let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
     ih_print(&ih, &mut uart);
     let mut ih_header: u32 = 0;
 
     for offset in 0..0x100 {
-        let val = unsafe { ptr::read_volatile((0x1002_0000+offset) as *const u8) };
+        let val = unsafe { ptr::read_volatile((0x1002_0000 + offset) as *const u8) };
         if offset % 16 == 0 {
-            write!(uart, "\r\n{:08x}-", 0x1002_0000+offset);
+            write!(uart, "\r\n{:08x}-", 0x1002_0000 + offset).unwrap();
         }
-        write!(uart, "{:02x} ", val);
+        write!(uart, "{:02x} ", val).unwrap();
     }
+    // write!(uart, "\r\n").unwrap();
 
     unsafe {
         asm!(
@@ -206,8 +257,6 @@ fn main() -> ! {
         );
     };
     writeln!(uart, "ih_header={:08x}\r", ih_header).unwrap();
-
-
 
     // writeln!(uart, "header_magic: {:08x}", ih.header_magic).unwrap();
     // writeln!(uart, "header_length: {}", ih.header_length).unwrap();
@@ -231,52 +280,7 @@ fn main() -> ! {
 
     delay.delay_ms(500);
 
-    // ldr r3, =XIP_SSI_BASE                   ; XIP_SSI_BASE             0x18000000
-
-    // // Disable SSI to allow further config
-    // mov r1, #0
-    // str r1, [r3, #SSI_SSIENR_OFFSET]        ; SSI_SSIENR_OFFSET        0x00000008
-
-    // // Set baud rate
-    // mov r1, #PICO_FLASH_SPI_CLKDIV          ; PICO_FLASH_SPI_CLKDIV    4
-    // str r1, [r3, #SSI_BAUDR_OFFSET]         ; SSI_BAUDR_OFFSET         0x00000014
-
-    // ldr r1, =(CTRLR0_XIP)      ; CTRLR0_XIP  (0x0 << 21) | (31  << 16) | (0x3 << 8)
-    // 0b0000_0000_0001_1111_0000_0011_0000_0000 = 0x001f0300
-    // str r1, [r3, #SSI_CTRLR0_OFFSET]        ; SSI_CTRLR0_OFFSET        0x00000000
-
-    // ldr r1, =(SPI_CTRLR0_XIP)  ; SPI_CTRLR0_XIP  (CMD_READ << 24) | (2 << 8) | (ADDR_L << 2) | (0x0 << 0)
-    // 0b0000_0011_0000_0000_0000_0010_0001_1000 = 0x03000218
-
-    // ldr r0, =(XIP_SSI_BASE + SSI_SPI_CTRLR0_OFFSET); SSI_SPI_CTRLR0_OFFSET    0x000000f4
-    // str r1, [r0]
-
-    // // NDF=0 (single 32b read)
-    // mov r1, #0x0
-    // str r1, [r3, #SSI_CTRLR1_OFFSET]        ; SSI_CTRLR1_OFFSET        0x00000004
-
-    // // Re-enable SSI
-    // mov r1, #1
-    // str r1, [r3, #SSI_SSIENR_OFFSET]
-
-    // unsafe {
-    //     asm!(
-    //         "ldr r3, =0x18000000",
-    //         "movs r1, #0",
-    //         "str r1, [r3, #0x00000008]",
-    //         "movs r1, #4",
-    //         "str r1, [r3, #0x00000014]",
-    //         "ldr r1, =0x001f0300",
-    //         "str r1, [r3, #0x00000000]",
-    //         "ldr r1, =0x03000218",
-    //         "ldr r0, =0x180000f4",
-    //         "str r1, [r0]",
-    //         "movs r1, #0x0",
-    //         "str r1, [r3, #0x00000004]",
-    //         "movs r1, #1",
-    //         "str r1, [r3, #0x00000008]",
-    //     );
-    // };
+    xip_enable();
 
     // exec => 0x10020100
     // stack pointer => VTOR[0] (VTOR=0xe000ed08)

@@ -4,8 +4,8 @@
 #![no_std]
 #![no_main]
 
-use blxlib::image_header;
-use core::fmt::Write;
+use blxlib::image_header::{self, ImageHeader};
+use core::{fmt::Write, ptr};
 use cortex_m_rt::entry;
 use defmt::*;
 use defmt_rtt as _; // used by panic-probe
@@ -39,6 +39,41 @@ pub static IMAGE_HEADER: image_header::ImageHeader = image_header::ImageHeader {
     padding: [0u8; 100],
     crc32: 0,
 };
+
+fn ih_print<
+    S: rp2040_hal::uart::State,
+    D: rp2040_hal::uart::UartDevice,
+    P: rp2040_hal::uart::ValidUartPinout<D>,
+>(
+    ih: &ImageHeader,
+    uart: &mut UartPeripheral<S, D, P>,
+) where
+    UartPeripheral<S, D, P>: Write,
+{
+    // info!("header_magic: {:08x}", ih.header_magic);
+    // info!("header_length: {}", ih.header_length);
+    // info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
+    // info!(
+    //     "iv: {}.{}.{}-{:08x}",
+    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    // );
+    // info!("image_length: {:08x}", ih.image_length);
+    // info!("payload_crc: {:08x}", ih.payload_crc);
+    // info!("crc32: {:08x}", ih.crc32);
+    writeln!(uart, "header_magic: {:08x}\r", ih.header_magic).unwrap();
+    writeln!(uart, "header_length: {}\r", ih.header_length).unwrap();
+    writeln!(uart, "hv: {}.{}\r", ih.hv_major, ih.hv_minor).unwrap();
+    writeln!(
+        uart,
+        "iv: {}.{}.{}-{:08x}\r",
+        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    )
+    .unwrap();
+    writeln!(uart, "image_length: {:08x}\r", ih.image_length).unwrap();
+    writeln!(uart, "payload_crc: {:08x}\r", ih.payload_crc).unwrap();
+    writeln!(uart, "crc32: {:08x}\r", ih.crc32).unwrap();
+}
+
 
 #[entry]
 fn main() -> ! {
@@ -84,13 +119,16 @@ fn main() -> ! {
     writeln!(uart, "MSP={:08x}\r", cortex_m::register::msp::read()).unwrap();
     writeln!(uart, "PC={:08x}\r", cortex_m::register::pc::read()).unwrap();
 
-    uart.write_full_blocking(b"app-blinky started...AAA\r\n");
+    uart.write_full_blocking(b"app-blinky started...BBB\r\n");
 
     #[cfg(debug_assertions)]
     writeln!(&mut uart, "app-blinky debug build\r").unwrap();
 
     #[cfg(not(debug_assertions))]
     writeln!(&mut uart, "app-blinky release build\r").unwrap();
+
+    let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
+    ih_print(&ih, &mut uart);
 
     // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
     // on-board LED, it might need to be changed.

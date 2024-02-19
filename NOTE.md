@@ -57,6 +57,11 @@
     - [アドレス調整](#アドレス調整)
     - [XIP Enable](#xip-enable)
     - [最適化](#最適化)
+  - [`rp2040-boot2`を再ビルドする](#rp2040-boot2を再ビルドする)
+    - [`arm-none-eabi-gcc`のインストール](#arm-none-eabi-gccのインストール)
+    - [`rp2040-boot2`の再ビルド](#rp2040-boot2の再ビルド)
+  - [`boot2_ram_memcpy.S`の修正](#boot2_ram_memcpysの修正)
+    - [`probe-rs`を使ってメモリ内容をダンプする](#probe-rsを使ってメモリ内容をダンプする)
     - [TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する](#todo-sram実行するとapp-blinkyイメージのバリデーションに失敗する)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
     - [Install OpenOCD](#install-openocd)
@@ -1814,22 +1819,44 @@ Debugビルドの場合、大きすぎて SRAMの256KBに入り切らなかっ�
 
 また、`Cargo.toml`に `opt-level="z"`というサイズ最適化オプショオンを使うことも有効だ。
 
+## `rp2040-boot2`を再ビルドする
+
+`rp2040-boot2`は、ビルド済みバイナリをダウンロードして組み込むようになっている。バイナリには、CRCが付加されているので、バイナリエディタで1バイト変更しても動かなくなる。boot2を改造しようとした場合、ソースコードをダウンロードして、ビルドし直さなければならない。
+
+### `arm-none-eabi-gcc`のインストール
+
+そのためには`arm-none-eabi-gcc`が必要。Macの場合、`brew install arm-none-eabi-gcc`でインストールした場合、ビルドしようとすると`cannot read spec file 'nosys.specs'`というエラーが出る。調べてみたら、パッケージが壊れているようだ。
+
+https://github.com/raspberrypi/pico-feedback/issues/355
+
+このページにあるように、パッケージの干渉を防ぐために、いったん`brew uninstall arm-none-eabi-gcc arm-none-eabi-gdb arm-none-eabi-bintool`して、さらに`brew autoremove`してから`brew install --cask gcc-arm-embedded`する。
+
+### `rp2040-boot2`の再ビルド
+
+gccが正しくインストールできていれば、`README.md`にあるとおり`UPDATE_PRECOMPILED_BINARIES=true cargo build --features=assemble`でアセンブラからCRC付きのバイナリが生成される。
+
+https://github.com/rp-rs/rp2040-boot2/blob/main/README.md
+
+## `boot2_ram_memcpy.S`の修正
+
+まだ原因はよくわかっていないが、`boot2_ram_memcpy.S`の中の`_disable_xip`を実行すると、`0x1002_0000`を読み出したいのに`0x1800_0000`を読み出してしまう。
+
+`boot2=ram=memcpy.S`を修正してビルド、それを`bootloader`の`boot2`に埋め込む。
+
+
+### `probe-rs`を使ってメモリ内容をダンプする
+
+```
+❯ probe-rs read --chip RP2040 --protocol swd b32 0x10020000 256
+```
+
+
+
+
 ### TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する
 
 
 # QSPI フラッシュメモリの操作
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
