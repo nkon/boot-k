@@ -14,7 +14,11 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 
 # If you're not going to use a Board Support Package you'll need these:
 rp2040-hal = { version="0.9", features=["rt", "critical-section-impl"] }
-rp2040-boot2 = "0.3"
+# rp2040-boot2 = "0.3"
 
 [dependencies.blxlib]
 path = "../blxlib"
+
+[dependencies.rp2040-boot2]
+path = "../rp2040-boot2"
+features = ["assemble"]

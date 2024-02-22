@@ -4,17 +4,14 @@
 #![no_std]
 #![no_main]
 
-use core::arch::asm;
-use core::fmt::Write;
-use core::ptr;
-use cortex_m_rt::entry;
-// use defmt::*;
-use defmt_rtt as _;
-// use embedded_hal::digital::v2::OutputPin;
 use blxlib::{
     crc32,
     image_header::{self, ImageHeader},
 };
+use core::arch::asm;
+use core::fmt::Write;
+use cortex_m_rt::entry;
+use defmt_rtt as _;
 use panic_probe as _;
 
 use rp2040_hal::{
@@ -42,28 +39,18 @@ fn ih_print<
 ) where
     UartPeripheral<S, D, P>: Write,
 {
-    // info!("header_magic: {:08x}", ih.header_magic);
-    // info!("header_length: {}", ih.header_length);
-    // info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
-    // info!(
-    //     "iv: {}.{}.{}-{:08x}",
-    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    // );
-    // info!("image_length: {:08x}", ih.image_length);
-    // info!("payload_crc: {:08x}", ih.payload_crc);
-    // info!("crc32: {:08x}", ih.crc32);
     writeln!(uart, "header_magic: {:08x}\r", ih.header_magic).unwrap();
-    // writeln!(uart, "header_length: {}\r", ih.header_length).unwrap();
-    // writeln!(uart, "hv: {}.{}\r", ih.hv_major, ih.hv_minor).unwrap();
-    // writeln!(
-    //     uart,
-    //     "iv: {}.{}.{}-{:08x}\r",
-    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    // )
-    // .unwrap();
-    // writeln!(uart, "image_length: {:08x}\r", ih.image_length).unwrap();
-    // writeln!(uart, "payload_crc: {:08x}\r", ih.payload_crc).unwrap();
-    // writeln!(uart, "crc32: {:08x}\r", ih.crc32).unwrap();
+    writeln!(uart, "header_length: {}\r", ih.header_length).unwrap();
+    writeln!(uart, "hv: {}.{}\r", ih.hv_major, ih.hv_minor).unwrap();
+    writeln!(
+        uart,
+        "iv: {}.{}.{}-{:08x}\r",
+        ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
+    )
+    .unwrap();
+    writeln!(uart, "image_length: {:08x}\r", ih.image_length).unwrap();
+    writeln!(uart, "payload_crc: {:08x}\r", ih.payload_crc).unwrap();
+    writeln!(uart, "crc32: {:08x}\r", ih.crc32).unwrap();
 }
 
 fn ih_validate<
@@ -173,10 +160,6 @@ fn xip_enable() {
 
 #[entry]
 fn main() -> ! {
-    // halt();
-    // info!("MSP={:08x}", cortex_m::register::msp::read());
-    // info!("PC={:08x}", cortex_m::register::pc::read());
-    // info!("Program start");
     let mut pac = pac::Peripherals::take().unwrap();
     let core = pac::CorePeripherals::take().unwrap();
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
@@ -234,45 +217,13 @@ fn main() -> ! {
 
     let pc = cortex_m::register::pc::read();
     writeln!(uart, "PC={:08x}\r", pc).unwrap();
-    
+
     let ih = image_header::load_from_addr(0x1002_0000);
-    // let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
     ih_print(&ih, &mut uart);
-    let mut ih_header: u32 = 0;
 
-    for offset in 0..0x100 {
-        let val = unsafe { ptr::read_volatile((0x1002_0000 + offset) as *const u8) };
-        if offset % 16 == 0 {
-            write!(uart, "\r\n{:08x}-", 0x1002_0000 + offset).unwrap();
-        }
-        write!(uart, "{:02x} ", val).unwrap();
-    }
-    // write!(uart, "\r\n").unwrap();
-
-    unsafe {
-        asm!(
-            "ldr r3, =0x10020000",
-            "ldr r1, [r3]",
-            "movs {}, r1", out(reg) ih_header
-        );
-    };
-    writeln!(uart, "ih_header={:08x}\r", ih_header).unwrap();
-
-    // writeln!(uart, "header_magic: {:08x}", ih.header_magic).unwrap();
-    // writeln!(uart, "header_length: {}", ih.header_length).unwrap();
-    // writeln!(uart, "hv: {}.{}", ih.hv_major, ih.hv_minor).unwrap();
-    // writeln!(
-    //     uart,
-    //     "iv: {}.{}.{}-{:08x}",
-    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    // )
-    // .unwrap();
-    // writeln!(uart, "image_length: {:08x}", ih.image_length).unwrap();
-    // writeln!(uart,"payload_crc: {:08x}", ih.payload_crc).unwrap();
-    // writeln!(uart, "crc32: {:08x}", ih.crc32).unwrap();
     if !ih_validate(&ih, &mut uart) {
         uart.write_full_blocking(b"bootloader: FAIL: IMAGE VALIDATION ***\r\n");
-        // halt();
+        halt();
     }
 
     uart.write_full_blocking(b"bootloader: app header validation pass\r\n");

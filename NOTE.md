@@ -61,8 +61,8 @@
     - [`arm-none-eabi-gcc`のインストール](#arm-none-eabi-gccのインストール)
     - [`rp2040-boot2`の再ビルド](#rp2040-boot2の再ビルド)
   - [`boot2_ram_memcpy.S`の修正](#boot2_ram_memcpysの修正)
+    - [`cargo`を使ってパッチをあてる](#cargoを使ってパッチをあてる)
     - [`probe-rs`を使ってメモリ内容をダンプする](#probe-rsを使ってメモリ内容をダンプする)
-    - [TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する](#todo-sram実行するとapp-blinkyイメージのバリデーションに失敗する)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
     - [Install OpenOCD](#install-openocd)
     - [OpenOCD + GDB でデバッグ](#openocd--gdb-でデバッグ)
@@ -1841,10 +1841,33 @@ https://github.com/rp-rs/rp2040-boot2/blob/main/README.md
 
 まだ原因はよくわかっていないが、`boot2_ram_memcpy.S`の中の`_disable_xip`を実行すると、`0x1002_0000`を読み出したいのに`0x1800_0000`を読み出してしまう。
 
-`boot2=ram=memcpy.S`を修正してビルド、それを`bootloader`の`boot2`に埋め込む。
+`boot2_ram_memcpy.S`を修正してビルド、それを`bootloader`の`boot2`に埋め込む。
+
+### `cargo`を使ってパッチをあてる
+
+`rp2040-boot2`をクローンしてきて、改造して取り込む。
+
+`bootloader`の`Cargo.toml`はもともと、次のようになっていた。これは`crete.io`から`0.3`と互換性があるバージョンをダウンロードしてきて、ライブラリをビルドしてリンクする、という意味。
+
+```
+[dependencies]
+rp2040-boot2 = "0.3"
+```
+
+それを次のように書き換える。`rp2040-boot2`はローカルの`../rp2040-boot2`にあり、`features = ["assemble"]`でビルドしてリンクする、という意味。`features=assemble`を付けると、`rp2040-boot2`は`*.S`から再アッセンブルをしてライブラリを作る。付けない場合はプレビルドしたバイナリからライブラリを作る。
+
+```
+[dependencies.rp2040-boot2]
+path = "../rp2040-boot2"
+features = ["assemble"]
+```
 
 
 ### `probe-rs`を使ってメモリ内容をダンプする
+
+このバグの修正には2ヶ月かかった。最終的に役に立ったのは、`probe-rs`を使ってメモリ内容をダンプして、想定どおりかどうかを逐一確認すること。
+
+メモリ内容が想定と違っていることがわかったので、それが、いつ生じるのかを、`bkpt 0`を挿入して確認すること。
 
 ```
 ❯ probe-rs read --chip RP2040 --protocol swd b32 0x10020000 256
@@ -1853,7 +1876,6 @@ https://github.com/rp-rs/rp2040-boot2/blob/main/README.md
 
 
 
-### TODO: SRAM実行すると、app-blinkyイメージのバリデーションに失敗する
 
 
 # QSPI フラッシュメモリの操作

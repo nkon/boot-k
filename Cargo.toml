@@ -8,6 +8,7 @@ members = [
 
 exclude = [
     "rp2040-project-template",
+    "rp2040-boot2",
     "boot-mem",
 ]
 
