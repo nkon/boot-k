@@ -86,9 +86,10 @@ where
         .unwrap();
         return false;
     }
-    if !ih.is_correct_crc() {
+    let calc_crc32= ih.calc_crc32();
+    if ih.crc32 !=  calc_crc32{
         // error!("crc32 is not correct: {:08x}", ih.crc32);
-        writeln!(uart, "crc32 is not correct: {:08x}\r", ih.crc32).unwrap();
+        writeln!(uart, "crc32 is not correct: header={:08x} calc={:08x}\r", ih.crc32, calc_crc32).unwrap();
         return false;
     }
     let slice = core::ptr::slice_from_raw_parts(

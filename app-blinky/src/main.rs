@@ -50,16 +50,6 @@ fn ih_print<
 ) where
     UartPeripheral<S, D, P>: Write,
 {
-    // info!("header_magic: {:08x}", ih.header_magic);
-    // info!("header_length: {}", ih.header_length);
-    // info!("hv: {}.{}", ih.hv_major, ih.hv_minor);
-    // info!(
-    //     "iv: {}.{}.{}-{:08x}",
-    //     ih.iv_major, ih.iv_minor, ih.iv_patch, ih.iv_build
-    // );
-    // info!("image_length: {:08x}", ih.image_length);
-    // info!("payload_crc: {:08x}", ih.payload_crc);
-    // info!("crc32: {:08x}", ih.crc32);
     writeln!(uart, "header_magic: {:08x}\r", ih.header_magic).unwrap();
     writeln!(uart, "header_length: {}\r", ih.header_length).unwrap();
     writeln!(uart, "hv: {}.{}\r", ih.hv_major, ih.hv_minor).unwrap();

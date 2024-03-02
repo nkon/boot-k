@@ -51,7 +51,7 @@ fn run_crc(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Box<dy
 
     let mut ih = image_header::load_from_buf(buf_ih);
 
-    ih.set_crc32();
+    ih.crc32 = ih.calc_crc32();
 
     let mut out_file = File::create(out_file_path)?;
     out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
@@ -77,7 +77,7 @@ fn run_sign(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Box<d
     ih.payload_crc = crc32::crc32(buf_payload);
     ih.image_length = payload_length as u32;
 
-    ih.set_crc32();
+    ih.crc32 = ih.calc_crc32();
 
     let mut out_file = File::create(out_file_path)?;
     out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
@@ -137,7 +137,7 @@ fn run_version(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Bo
         None => println!("Not found"),
     }
 
-    ih.set_crc32();
+    ih.crc32 = ih.calc_crc32();
 
     let mut out_file = File::create(out_file_path)?;
     out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
@@ -200,7 +200,7 @@ fn run_all(in_file_path: &PathBuf, out_file_path: &PathBuf) -> Result<(), Box<dy
     ih.image_length = payload_length as u32;
 
     // update header_crc
-    ih.set_crc32();
+    ih.crc32 = ih.calc_crc32();
 
     let mut out_file = File::create(out_file_path)?;
     out_file.write_all(image_header::as_bytes_with_len(&ih, header_len))?;
