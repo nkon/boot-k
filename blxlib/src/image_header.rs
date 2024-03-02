@@ -6,6 +6,9 @@ pub const HV_MAJOR: u8 = 0;
 pub const HV_MINOR: u8 = 1;
 pub const IMAGE_HEADER_MAGIC: u32 = 0xb00710ad;
 // pub const IMAGE_HEADER_MAGIC: u32 = 0xFFFFFFFF;
+pub const APP_BASE_ADDR: u32 = 0x1002_0000;
+pub const APP_UPDATE_ADDR: u32 = 0x1010_0000;
+pub const APP_SIZE: u32 = 0xe_0000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

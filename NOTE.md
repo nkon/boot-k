@@ -61,7 +61,7 @@
     - [`arm-none-eabi-gcc`のインストール](#arm-none-eabi-gccのインストール)
     - [`rp2040-boot2`の再ビルド](#rp2040-boot2の再ビルド)
   - [`boot2_ram_memcpy.S`の修正](#boot2_ram_memcpysの修正)
-    - [`cargo`を使ってパッチをあてる](#cargoを使ってパッチをあてる)
+    - [`rp2040-boot2`の改造](#rp2040-boot2の改造)
     - [`probe-rs`を使ってメモリ内容をダンプする](#probe-rsを使ってメモリ内容をダンプする)
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
     - [Install OpenOCD](#install-openocd)
@@ -1839,11 +1839,12 @@ https://github.com/rp-rs/rp2040-boot2/blob/main/README.md
 
 ## `boot2_ram_memcpy.S`の修正
 
-まだ原因はよくわかっていないが、`boot2_ram_memcpy.S`の中の`_disable_xip`を実行すると、`0x1002_0000`を読み出したいのに`0x1800_0000`を読み出してしまう。
+`boot2_ram_memcpy`は、XIPを有効にする→プログラムをQSPI FlashからRAMにコピーする→XIPを無効にする→RAMにコピーしたプログラムを実行する、という動作をする。
+RAMにコピーした`bootloader`がQSPI Flash領域のヘッダである`0x1002_0000`を読み出そうとすると、別のアドレス(この場合は`0x1800_0000`というペリフェラルレジスタのアドレスだった)からゴミを読み出してしまう。
 
-`boot2_ram_memcpy.S`を修正してビルド、それを`bootloader`の`boot2`に埋め込む。
+`boot2_ram_memcpy.S`の中の`_disable_xip`を実行しないように`boot2_ram_memcpy.S`を修正してビルド、それを`bootloader`の`boot2`に埋め込む。
 
-### `cargo`を使ってパッチをあてる
+### `rp2040-boot2`の改造
 
 `rp2040-boot2`をクローンしてきて、改造して取り込む。
 
@@ -1876,12 +1877,14 @@ features = ["assemble"]
 
 
 
-
-
 # QSPI フラッシュメモリの操作
 
+`bootloader`は、QSPI Flash領域にあるアプリケーションイメージのヘッダのバージョンをチェックし、実行領域にあるアプリのバージョンよりも、アップデート領域にあるアプリのバージョンが新しければ、
+アップデート領域のメモリを実行領域にコピーする。
 
+このとき、上述のように、バージョンチェック時はXIPを有効にして置かなければならない。
 
+しかし、XIPが有効であれば、メモリはREAD ONLYでマップされる。コピー時にはXIPを無効にして、時前でQSPI Flashのコマンドを発行する必要がある。
 
 
 

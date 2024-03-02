@@ -59,6 +59,7 @@ fn ih_validate<
     P: rp2040_hal::uart::ValidUartPinout<D>,
 >(
     ih: &ImageHeader,
+    start_address: u32,
     uart: &mut UartPeripheral<S, D, P>,
 ) -> bool
 where
@@ -91,13 +92,18 @@ where
         return false;
     }
     let slice = core::ptr::slice_from_raw_parts(
-        (0x1002_0000 + image_header::HEADER_LENGTH as usize) as *const u8,
+        (start_address as usize + image_header::HEADER_LENGTH as usize) as *const u8,
         ih.image_length as usize,
     );
     let payload_crc = crc32::crc32(unsafe { &*slice });
     if ih.payload_crc != payload_crc {
         // error!("payload_crc is not correct: {:08x}", ih.payload_crc);
-        writeln!(uart, "payload_crc is not correct: {:08x}\r", ih.payload_crc).unwrap();
+        writeln!(
+            uart,
+            "payload_crc is not correct: header={:08x} calc={:08x}\r",
+            ih.payload_crc, payload_crc
+        )
+        .unwrap();
         return false;
     }
     true
@@ -107,6 +113,39 @@ fn halt() -> ! {
     loop {
         cortex_m::asm::wfi();
     }
+}
+
+fn copy_image(_to_addr: u32, _from_addr: u32, _size: u32) {
+    //     ldr r0, =ROM_FN_TABLE
+    //     ldrh r0, [r0]
+    //     ldr r2, =ROM_TABLE_LOOKUP
+    //     ldrh r2, [r2]
+
+    //     // Query the bootrom function pointer
+    //     ldr r1, =0x3443 // 'C','4' for _memcpy44
+    //     blx r2
+
+    //     //uint8_t *_memcpy44(uint32_t *dest, uint32_t *src, uint32_t n)
+    //     mov r3, r0
+    //     ldr r0, =DST
+    //     ldr r1, =SRC
+    //     ldr r2, =LEN
+    //     blx r3
+    unsafe {
+        asm!(
+            "ldr r0, =0x00000014",
+            "ldrh r0, [r0]",
+            "ldr r2, =0x00000018",
+            "ldrh r2, [r2]",
+            "ldr r1, =0x3443",
+            "blx r2",
+            "mov r3, r0",
+            "ldr r0, =0x10020000",
+            "ldr r1, =0x10100000",
+            "ldr r2, =0xe0000",
+            "blx r3",
+        );
+    };
 }
 
 fn xip_enable() {
@@ -218,12 +257,29 @@ fn main() -> ! {
     let pc = cortex_m::register::pc::read();
     writeln!(uart, "PC={:08x}\r", pc).unwrap();
 
-    let ih = image_header::load_from_addr(0x1002_0000);
+    uart.write_full_blocking(b"bootloader: check base image\r\n");
+    let ih = image_header::load_from_addr(image_header::APP_BASE_ADDR);
     ih_print(&ih, &mut uart);
 
-    if !ih_validate(&ih, &mut uart) {
+    if !ih_validate(&ih, image_header::APP_BASE_ADDR, &mut uart) {
         uart.write_full_blocking(b"bootloader: FAIL: IMAGE VALIDATION ***\r\n");
         halt();
+    }
+
+    uart.write_full_blocking(b"bootloader: check update image\r\n");
+    let ih_update = image_header::load_from_addr(image_header::APP_UPDATE_ADDR);
+    ih_print(&ih_update, &mut uart);
+
+    if ih_validate(&ih_update, image_header::APP_UPDATE_ADDR, &mut uart) {
+        uart.write_full_blocking(b"bootloader: UPDATE IMAGE FOUND ***\r\n");
+        copy_image(
+            image_header::APP_BASE_ADDR,
+            image_header::APP_UPDATE_ADDR,
+            image_header::APP_SIZE,
+        );
+        uart.write_full_blocking(b"bootloader: UPDATE IMAGE -> BASE IMAGE\r\n");
+        // let ih = image_header::load_from_addr(image_header::APP_BASE_ADDR);
+        // ih_print(&ih, &mut uart);
     }
 
     uart.write_full_blocking(b"bootloader: app header validation pass\r\n");
