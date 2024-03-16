@@ -66,8 +66,7 @@ where
     UartPeripheral<S, D, P>: Write,
 {
     // validate header
-    if !ih.is_correct_magic() {
-        // error!("header_magic is not correct: {:08x}", ih.header_magic);
+    if ih.header_magic != image_header::IMAGE_HEADER_MAGIC {
         writeln!(
             uart,
             "header_magic is not correct: {:08x}\r",
@@ -77,7 +76,6 @@ where
         return false;
     }
     if ih.header_length != image_header::HEADER_LENGTH {
-        // error!("header_length is not correct: {:08x}", ih.header_length);
         writeln!(
             uart,
             "header_length is not correct: {:08x}\r",
@@ -86,10 +84,14 @@ where
         .unwrap();
         return false;
     }
-    let calc_crc32= ih.calc_crc32();
-    if ih.crc32 !=  calc_crc32{
-        // error!("crc32 is not correct: {:08x}", ih.crc32);
-        writeln!(uart, "crc32 is not correct: header={:08x} calc={:08x}\r", ih.crc32, calc_crc32).unwrap();
+    let calc_crc32 = ih.calc_crc32();
+    if ih.crc32 != calc_crc32 {
+        writeln!(
+            uart,
+            "crc32 is not correct: header={:08x} calc={:08x}\r",
+            ih.crc32, calc_crc32
+        )
+        .unwrap();
         return false;
     }
     let slice = core::ptr::slice_from_raw_parts(
@@ -98,7 +100,6 @@ where
     );
     let payload_crc = crc32::crc32(unsafe { &*slice });
     if ih.payload_crc != payload_crc {
-        // error!("payload_crc is not correct: {:08x}", ih.payload_crc);
         writeln!(
             uart,
             "payload_crc is not correct: header={:08x} calc={:08x}\r",

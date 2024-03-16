@@ -71,9 +71,6 @@ impl ImageHeader {
             crc32: 0,
         }
     }
-    pub fn is_correct_magic(&self) -> bool {
-        self.header_magic == IMAGE_HEADER_MAGIC
-    }
     pub fn calc_crc32(&self) -> u32 {
         let buf = as_bytes_with_len(self, HEADER_LENGTH as usize - 4);
         crc32(buf)
@@ -83,17 +80,6 @@ impl ImageHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_is_correct_magic() {
-        let mut ih = ImageHeader::new();
-        let result = ih.is_correct_magic();
-        assert_eq!(result, true);
-
-        ih.header_magic = 0;
-        let result = ih.is_correct_magic();
-        assert_eq!(result, false);
-    }
 
     #[test]
     fn test_calc_crc32() {

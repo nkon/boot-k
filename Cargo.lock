@@ -16,7 +16,6 @@ name = "app-blinky"
 version = "0.1.0"
 dependencies = [
  "blxlib",
- "bootloader",
  "cortex-m",
  "cortex-m-rt",
  "defmt",

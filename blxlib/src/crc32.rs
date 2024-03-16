@@ -15,6 +15,7 @@ const fn table_fn(i: u32) -> u32 {
     out = if out & 1 == 1 { 0xedb88320 ^ (out >> 1) } else { out >> 1 };
     out
 }
+
 const fn get_table() -> [u32; 256] {
     let mut table: [u32; 256] = [0u32; 256];
     let mut i = 0;
@@ -24,6 +25,7 @@ const fn get_table() -> [u32; 256] {
     }
     table
 }
+
 const TABLE: [u32; 256] = get_table();
 
 pub fn crc32(buf: &[u8]) -> u32 {
@@ -50,7 +52,7 @@ mod tests {
 
         // https://crccalc.com/?crc=hoge&method=crc32&datatype=ascii&outtype=0
         let input = "hoge".as_bytes();
-        let result = crc32(&input);
+        let result = crc32(input);
         assert_eq!(result, 0x8B39E45A);
     }
 }

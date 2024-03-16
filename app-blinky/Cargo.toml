@@ -4,7 +4,7 @@ name = "app-blinky"
 version = "0.1.0"
 
 [dependencies]
-cortex-m = "0.7"
+cortex-m = { version = "0.7", features = ["inline-asm"] }
 cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2.5", features = ["unproven"] }
 
@@ -15,10 +15,6 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 # If you're not going to use a Board Support Package you'll need these:
 rp2040-hal = { version="0.9", features=["rt", "critical-section-impl"] }
 rp2040-boot2 = "0.3"
-
-[dependencies.bootloader]
-path = "../bootloader"
-
 
 [dependencies.blxlib]
 path = "../blxlib"

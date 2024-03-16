@@ -64,7 +64,6 @@ fn ih_print<
     writeln!(uart, "crc32: {:08x}\r", ih.crc32).unwrap();
 }
 
-
 #[entry]
 fn main() -> ! {
     info!("app-blinky: defmt-rtt");
@@ -117,7 +116,7 @@ fn main() -> ! {
     #[cfg(not(debug_assertions))]
     writeln!(&mut uart, "app-blinky release build\r").unwrap();
 
-    let ih = unsafe { ptr::read_volatile(0x1002_0000 as *const ImageHeader) };
+    let ih = unsafe { ptr::read_volatile(image_header::APP_BASE_ADDR as *const ImageHeader) };
     ih_print(&ih, &mut uart);
 
     // This is the correct pin on the Raspberry Pico board. On other boards, even if they have an
