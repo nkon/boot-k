@@ -66,6 +66,7 @@
 - [QSPI フラッシュメモリの操作](#qspi-フラッシュメモリの操作)
     - [Install OpenOCD](#install-openocd)
     - [OpenOCD + GDB でデバッグ](#openocd--gdb-でデバッグ)
+- [DeepWiki](#deepwiki)
 
 
 # ワークスペースの作成
@@ -2002,3 +2003,8 @@ Program received signal SIGINT, Interrupt.
 (gdb)
 ```
 
+# DeepWiki
+
+DeepWiki.comによる文書化はこちら
+
+[https://deepwiki.com/nkon/boot-k](https://deepwiki.com/nkon/boot-k)
